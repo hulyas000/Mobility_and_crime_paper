@@ -1,0 +1,2627 @@
+---
+title: "COVARIATE ADJUSTMENT"
+output: html_notebook
+---
+LEAVE THE CODES ONLY FOR CONFOUNDERS!!!
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models")
+
+# police data county st
+```{r}
+library(readr)
+library(sf)
+library(stringr)
+library(dplyr)
+library(purrr)
+
+```
+
+#Simple models with LAD charactestic variables to explain difference between simple and afe model
+```{r}
+# Read the data once
+crime_mobility_merged <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/crime_data_merged.csv")
+
+```
+
+
+# Household characteristics
+```{r}
+setwd('/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/')
+library(readr)
+census2021_ts001_ward <- read_csv("data/census2021-ts001-extra/census2021-ts001-ward.csv")
+census2021_ts006_ward <- read_csv("data/census2021-ts006-extra/census2021-ts006-ward.csv")
+census2021_ts008_ward <- read_csv("data/census2021-ts008-extra/census2021-ts008-ward.csv")
+census2021_ts018_ward <- read_csv("data/census2021-ts018-extra/census2021-ts018-ward.csv")
+census2021_ts037_ward <- read_csv("data/census2021-ts037-extra/census2021-ts037-ward.csv")
+census2021_ts038_ward <- read_csv("data/census2021-ts038-extra/census2021-ts038-ward.csv")
+census2021_ts040_ward <- read_csv("data/census2021-ts040-extra/census2021-ts040-ward.csv")
+census2021_ts044_ward <- read_csv("data/census2021-ts044-extra/census2021-ts044-ward.csv")
+census2021_ts045_ward <- read_csv("data/census2021-ts045-extra/census2021-ts045-ward.csv")
+census2021_ts058_ward <- read_csv("data/census2021-ts058-extra/census2021-ts058-ward.csv")
+census2021_ts059_ward <- read_csv("data/census2021-ts059-extra/census2021-ts059-ward.csv")
+census2021_ts061_ward <- read_csv("data/census2021-ts061-extra/census2021-ts061-ward.csv")
+census2021_ts065_ward <- read_csv("data/census2021-ts065-extra/census2021-ts065-ward.csv")
+census2021_ts066_ward <- read_csv("data/census2021-ts066-extra/census2021-ts066-ward.csv")
+census2021_ts067_ward <- read_csv("data/census2021-ts067-extra/census2021-ts067-ward.csv")
+
+ts001_ward <- census2021_ts001_ward %>% 
+  select(-c(`Residence type: Total: All usual residents`, date))
+ts006_ward <- census2021_ts006_ward %>%
+  select(-date)
+ts008_ward <- census2021_ts008_ward %>%
+  select(-c(date, `Sex: All persons`))
+
+#Aggregate general health conditon to 3 level
+ts037_ward <- census2021_ts037_ward %>%
+  mutate(
+    `General health: Good Health` = `General health: Very good health` + `General health: Good health`,
+    `General health: Bad Health` = `General health: Fair health` + `General health: Bad health`,
+  ) %>%
+  select(geography, `geography code`,`General health: Good Health`, `General health: Bad Health`, `General health: Very bad health`)
+
+#Just select very limited activity
+ts038_ward <- census2021_ts038_ward %>% 
+  mutate(
+    `Disability: very limited activity` = `Disability: Disabled under the Equality Act: Day-to-day activities limited a lot`
+  ) %>% 
+  select(geography, `geography code`, `Disability: very limited activity`)
+
+ts044_ward <- census2021_ts044_ward %>% 
+  select(geography, `geography code`, `Accommodation type: Detached`, `Accommodation type: Semi-detached`, `Accommodation type: Terraced`, `Accommodation type: In a purpose-built block of flats or tenement`, `Accommodation type: Part of a converted or shared house, including bedsits`, `Accommodation type: Part of another converted building, for example, former school, church or warehouse`)
+
+ts045_ward <- census2021_ts045_ward %>% 
+  select(-c(date, `Number of cars or vans: Total: All households`, `Number of cars or vans: No cars or vans in household`))
+
+ts058_ward <- census2021_ts058_ward %>% 
+  mutate(`Distance travel to work: 10km and over` = `Distance travelled to work: 10km to less than 20km` + `Distance travelled to work: 20km to less than 30km` + `Distance travelled to work: 30km to less than 40km` + `Distance travelled to work: 40km to less than 60km` + `Distance travelled to work: 60km and over`) %>% 
+  select(geography, `geography code`, `Distance travelled to work: Less than 2km`, `Distance travelled to work: 5km to less than 10km`, `Distance travel to work: 10km and over`, `Distance travelled to work: Works mainly at an offshore installation, in no fixed place, or outside the UK`)
+
+ts059_ward <- census2021_ts059_ward %>% 
+  select(geography, `geography code`, `Hours worked: Part-time: 15 hours or less worked`, `Hours worked: Part-time: 16 to 30 hours worked`, `Hours worked: Full-time: 31 to 48 hours worked`, `Hours worked: Full-time: 49 or more hours worked`)
+
+
+ts061_ward <- census2021_ts061_ward %>% 
+  mutate(`Method of travel to workplace: Public Transport` = `Method of travel to workplace: Train` + `Method of travel to workplace: Bus, minibus or coach` + `Method of travel to workplace: Underground, metro, light rail, tram`,
+         `Method of travel to workplace: Private Car or Taxi` = `Method of travel to workplace: Driving a car or van` + `Method of travel to workplace: Passenger in a car or van` + `Method of travel to workplace: Taxi`) %>% 
+  select(geography, `geography code`, `Method of travel to workplace: Public Transport`, `Method of travel to workplace: Private Car or Taxi`, `Method of travel to workplace: Bicycle`, `Method of travel to workplace: On foot`, `Method of travel to workplace: Work mainly at or from home`)
+   
+ts065_ward <- census2021_ts065_ward %>% 
+  select(geography, `geography code`, `Employment history: Not in employment: Not worked in the last 12 months`, `Employment history: Not in employment: Never worked`)
+
+ts066_ward <- census2021_ts066_ward %>% 
+  select(geography, `geography code`, `Economic activity status: Economically active (excluding full-time students)`, `Economic activity status: Economically inactive: Looking after home or family`, `Economic activity status: Economically inactive`)
+
+ts067_ward <- census2021_ts067_ward %>% 
+  mutate(`Highest level of qualification: Level 1 to Level 3` = `Highest level of qualification: Level 1 and entry level qualifications` + `Highest level of qualification: Level 2 qualifications` + `Highest level of qualification: Level 3 qualifications`) %>% 
+  select(geography, `geography code`, `Highest level of qualification: No qualifications`, `Highest level of qualification: Level 1 to Level 3`, `Highest level of qualification: Level 4 qualifications or above`, `Highest level of qualification: Apprenticeship`)
+
+combined_census_ward <- ts001_ward %>%
+  left_join(ts006_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts008_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts037_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts038_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts044_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts045_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts058_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts059_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts061_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts065_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts066_ward, by = c("geography code" , "geography")) %>%
+  left_join(ts067_ward, by = c("geography code" , "geography"))
+
+# Merge LAD level
+
+lsoa_to_lad <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/PCD_OA_LSOA_MSOA_LAD_MAY19_UK_LU.csv")
+library(readxl)
+LSOA11_to_WD21_EW <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/LSOA11_WD21_LAD21_EW_LU.xlsx")
+
+LSOA11_to_WD21_EW <- LSOA11_to_WD21_EW %>% 
+  select(LSOA11CD, WD21CD)
+
+ward_to_lsoa_to_lad <- left_join(lsoa_to_lad, LSOA11_to_WD21_EW, by = c("lsoa11cd" = "LSOA11CD"))
+ward_to_lsoa_to_lad <- ward_to_lsoa_to_lad %>% 
+  select(ladcd, WD21CD)
+
+combined_census_with_lad <- combined_census_ward %>%
+  left_join(ward_to_lsoa_to_lad, by = c("geography code" = "WD21CD"))
+
+census_lad <- combined_census_with_lad %>%
+  group_by(ladcd) %>%
+  summarise(
+    across(
+      .cols = -c(geography, `geography code`, starts_with("geography")), 
+      .fns = ~sum(.x, na.rm = TRUE),
+      .names = "{.col}_sum" 
+    )
+  )
+
+
+#Merge with crime data
+
+crime_mobility_census <- left_join(crime_mobility_merged, census_lad, by = 'ladcd')
+
+write.csv(crime_mobility_census, file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv", row.names = FALSE)
+```
+
+# PAYE data
+```{r}
+crime_mobility_census <- read.csv(file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv")
+
+library(readxl)
+mean_paye <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/rtisadec2023.xlsx", 
+    sheet = "21. Mean pay (LA)", range = "A6:NZ108")
+View(mean_paye)
+
+library(tidyverse)
+library(lubridate)
+
+# Transpose the dataset and convert it to a tibble
+mean_paye_t <- as_tibble(t(mean_paye))
+
+# Create vectors for 'ladcd' and 'ladnm'
+month <- mean_paye_t[1, -c(1,2)] 
+
+ladcd <- mean_paye_t[-1, 1] # Excluding the first column
+
+ladnm <- mean_paye_t[-1, 2] # Excluding the first column
+
+
+# Removing the first two rows from the transposed dataset
+mean_paye_t <- mean_paye_t[-1, ]
+
+# Renaming the first column to 'month'
+colnames(mean_paye_t)[1] <- "ladcd"
+colnames(mean_paye_t)[2] <- "ladnm"
+
+
+col_names <- paste0("V", 3:102)
+names_map <- setNames(as.character(month), col_names)
+
+# Pivot to long format and replace column names with months
+long_mean_paye <- mean_paye_t %>%
+  pivot_longer(
+    cols = V3:V102,
+    names_to = "month",
+    values_to = "mean_pay",
+    values_transform = list(mean_pay = as.numeric)
+  ) %>%
+  mutate(month = names_map[month])
+
+long_mean_paye <- long_mean_paye %>%
+  mutate(month = myd(paste0(month, "-01")),
+         month = format(month, "%Y-%m"))
+
+long_mean_paye$month <- as.Date(paste0(long_mean_paye$month, "-01"), "%Y-%m-%d")
+crime_mobility_census$month <- as.Date(crime_mobility_census$month, , "%Y-%m-%d")
+
+crime_mobility_census <- left_join(crime_mobility_census, long_mean_paye, by = c("month", "ladcd", 'ladnm'))
+
+write.csv(crime_mobility_census, file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv", row.names = FALSE)
+```
+
+#stop and search counts ()
+```{r}
+library(readr)
+stop_search_counts <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/stop_search_counts.csv")
+View(stop_search_counts)
+
+stop_search_counts <- stop_search_counts %>%
+  group_by(lad11cd, month) %>%
+  summarize(search_count = sum(search_count, na.rm = TRUE))
+
+stop_search_counts <- stop_search_counts %>%
+  mutate(month = as.Date(paste0(month, "-01"), "%Y-%m-%d")) %>% 
+  rename(ladcd = lad11cd)
+
+crime_mobility_census <- crime_mobility_census %>%
+  left_join(stop_search_counts, by = c("ladcd", "month"))
+
+set.seed(123) # Setting a seed for reproducibility
+
+crime_mobility_census <- crime_mobility_census %>%
+  mutate(search_count = if_else(is.na(search_count), 
+                                sample(1:3, size = 1, replace = TRUE), 
+                                search_count))
+
+write.csv(crime_mobility_census, file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv", row.names = FALSE)
+```
+
+#NOMIS LA characteristics
+```{r}
+library(dplyr)
+library(tidyr)
+library(readr)
+library(readxl)
+
+crime_mobility_census <- read.csv(file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv")
+
+nomis_pop_total <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_age.xlsx", 
+    sheet = "Total; All Ages", range = "A7:E390")
+View(nomis_pop_total)
+
+nomis_pop_male <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_age.xlsx", 
+    sheet = "Male; All Ages", range = "A7:E390")
+View(nomis_pop_male)
+
+nomis_young_pop<- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_age.xlsx", 
+    sheet = "Total; Aged 18 to 24", range = "A7:E390")
+View(nomis_young_pop)
+
+# Convert character counts to numeric for all datasets
+nomis_pop_male <- nomis_pop_male %>%
+  mutate(across(c(`2020`, `2021`, `2022`), as.numeric))
+
+nomis_pop_total <- nomis_pop_total %>%
+  mutate(across(c(`2020`, `2021`, `2022`), as.numeric))
+
+nomis_young_pop <- nomis_young_pop %>%
+  mutate(across(c(`2020`, `2021`, `2022`), as.numeric))
+
+# Reshape datasets to long format
+nomis_pop_male_long <- nomis_pop_male %>%
+  pivot_longer(cols = c(`2020`, `2021`, `2022`), names_to = "year", values_to = "male_count") %>%
+  mutate(year = as.numeric(year))
+
+nomis_pop_total_long <- nomis_pop_total %>%
+  pivot_longer(cols = c(`2020`, `2021`, `2022`), names_to = "year", values_to = "total_count") %>%
+  mutate(year = as.numeric(year))
+
+nomis_young_pop_long <- nomis_young_pop %>%
+  pivot_longer(cols = c(`2020`, `2021`, `2022`), names_to = "year", values_to = "young_count") %>%
+  mutate(year = as.numeric(year))
+
+# Merge male and total population datasets
+pop_proportion <- merge(nomis_pop_male_long, nomis_pop_total_long, by = c("ladcd", "ladnm", "year"))
+
+# Calculate the proportion of males
+pop_proportion <- pop_proportion %>%
+  mutate(male_proportion = male_count / total_count)
+
+# Merge the pop_proportion with young population dataset
+pop_proportion <- merge(pop_proportion, nomis_young_pop_long, by = c("ladcd", "ladnm", "year"))
+
+# If you need to calculate a proportion for the young population, you can do it here after merging
+pop_proportion <- pop_proportion %>%
+  mutate(young_proportion = young_count / total_count)
+
+# Population Density
+area_measurement <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/SAM for Administrative Areas (2019)/SAM_LAD_DEC_2019_UK.xlsx")
+
+names(area_measurement)[names(area_measurement) == "LAD19CD"] <- "ladcd"
+names(area_measurement)[names(area_measurement) == "LAD19NM"] <- "ladnm"
+
+# use AREALHECT because it measures actual land area available for habitation and use by the population
+pop_proportion_merged <- merge(pop_proportion, area_measurement[, c("ladcd", "ladnm", "AREALHECT")], by = c("ladcd", "ladnm"))
+
+# calculate population density
+pop_proportion_merged <- pop_proportion_merged %>%
+  mutate(pop_density = total_count / AREALHECT / 100)
+
+
+pop_proportion_selected <- pop_proportion_merged %>% 
+  dplyr::select(ladnm, ladcd, year, male_proportion, young_proportion, pop_density)
+
+crime_mobility_census <- merge(crime_mobility_census, pop_proportion_selected, by = c("ladcd", "ladnm", "year"))
+
+### NOMIS ETHNICITY ###
+nomis_ethnicity_19 <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_ethnicity.xlsx", 
+    sheet = "Jan 2019-Dec 2019", range = "A7:H378")
+View(nomis_ethnicity_19)
+
+nomis_ethnicity_20 <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_ethnicity.xlsx", 
+    sheet = "Jan 2020-Dec 2020", range = "A7:H378")
+View(nomis_ethnicity_20)
+
+nomis_ethnicity_21 <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_ethnicity.xlsx", 
+    sheet = "Jan 2021-Dec 2021", range = "A7:H378")
+View(nomis_ethnicity_21)
+
+nomis_ethnicity_22 <- read_excel("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_ethnicity.xlsx", 
+    sheet = "Jan 2022-Dec 2022", range = "A7:H378")
+View(nomis_ethnicity_22)
+
+# Function to replace specific symbols with numeric values. ! Estimate and confidence interval not available since the group sample size is zero or disclosive (0-2).* Estimate and confidence interval unreliable since the group sample size is small (3-9).~ Estimate is less than 500.- These figures are missing.
+set.seed(123)
+replace_values <- function(x) {
+  x <- as.character(x)
+  x[x == "!"] <- sample(0:2, sum(x == "!"), replace = TRUE)
+  x[x == "*"] <- sample(3:9, sum(x == "*"), replace = TRUE)
+  x[x == "~"] <- 500
+  x[x == "-"] <- NA
+  as.numeric(x)
+}
+
+# Applying the function to each column (except ladnm and ladcd)
+nomis_ethnicity_19 <- nomis_ethnicity_19 %>%
+  mutate(across(c(white, mixed, indian, paki_bangi, black, other), replace_values))
+nomis_ethnicity_20 <- nomis_ethnicity_20 %>%
+  mutate(across(c(white, mixed, indian, paki_bangi, black, other), replace_values))
+nomis_ethnicity_21 <- nomis_ethnicity_21 %>%
+  mutate(across(c(white, mixed, indian, paki_bangi, black, other), replace_values))
+nomis_ethnicity_22 <- nomis_ethnicity_22 %>%
+  mutate(across(c(white, mixed, indian, paki_bangi, black, other), replace_values))
+
+nomis_ethnicity_19 <- nomis_ethnicity_19 %>% 
+  mutate(year = 2019)
+nomis_ethnicity_20 <- nomis_ethnicity_20 %>% 
+  mutate(year = 2020)
+nomis_ethnicity_21 <- nomis_ethnicity_21 %>% 
+  mutate(year = 2021)
+nomis_ethnicity_22 <- nomis_ethnicity_22 %>% 
+  mutate(year = 2022)
+
+# 2019 - 2020
+year1 <- bind_rows(nomis_ethnicity_19,nomis_ethnicity_20) 
+change_year1 <- year1 %>% 
+   group_by(ladcd, ladnm) %>%
+  arrange(ladcd, year) %>% 
+  summarise(
+    white = (first(white) - last(white)) / last(white) * 100,
+    mixed = (last(mixed) - first(mixed)) / first(mixed) * 100,
+    indian = (last(indian) - first(indian)) / first(indian) * 100,
+    paki_bangi = (last(paki_bangi) - first(paki_bangi)) / first(paki_bangi) * 100,
+    black = (last(black) - first(black)) / first(black) * 100,
+    other = (last(other) - first(other)) / first(other) * 100,
+    .groups = "drop" 
+  )
+
+# 2020-2021
+year2 <- bind_rows(nomis_ethnicity_20,nomis_ethnicity_21) 
+change_year2 <- year2 %>% 
+   group_by(ladcd, ladnm) %>%
+  arrange(ladcd, year) %>% 
+  summarise(
+    white = (first(white) - last(white)) / last(white) * 100,
+    mixed = (last(mixed) - first(mixed)) / first(mixed) * 100,
+    indian = (last(indian) - first(indian)) / first(indian) * 100,
+    paki_bangi = (last(paki_bangi) - first(paki_bangi)) / first(paki_bangi) * 100,
+    black = (last(black) - first(black)) / first(black) * 100,
+    other = (last(other) - first(other)) / first(other) * 100,
+    .groups = "drop" 
+  )
+
+# 2021-2022
+year3<- bind_rows(nomis_ethnicity_21,nomis_ethnicity_22) 
+change_year3 <- year3 %>% 
+   group_by(ladcd, ladnm) %>%
+  arrange(ladcd, year) %>% 
+  summarise(
+    white = (first(white) - last(white)) / last(white) * 100,
+    mixed = (last(mixed) - first(mixed)) / first(mixed) * 100,
+    indian = (last(indian) - first(indian)) / first(indian) * 100,
+    paki_bangi = (last(paki_bangi) - first(paki_bangi)) / first(paki_bangi) * 100,
+    black = (last(black) - first(black)) / first(black) * 100,
+    other = (last(other) - first(other)) / first(other) * 100,
+    .groups = "drop" 
+  )
+ethnicity <- bind_rows(year1,year2,year3)
+
+
+# Merge with crime data
+crime_mobility_census <- merge(crime_mobility_census, ethnicity, by = c("ladcd", 'ladnm', "year"))
+
+
+### NOMIS UNEMPLOYMENT ###
+unemployment <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_unemployment.xlsx", 
+    sheet = "Unemployment rate - aged 16-64", 
+    range = "A8:N379")
+View(unemployment)
+
+unemployment_cleaned <- unemployment %>%
+  dplyr::select(ladnm, ladcd, dplyr::starts_with("percent")) %>%
+  dplyr::rename(year_2020 = percent_2020, year_2021 = percent_2021, year_2022 = percent_2022) %>%
+  tidyr::pivot_longer(cols = dplyr::starts_with("year"), names_to = "year", values_to = "unemployment_rate") %>%
+  dplyr::mutate(year = as.integer(sub("year_", "", year)),
+         unemployment_rate = as.numeric(unemployment_rate))
+
+
+#Merge the reshaped age dataset with `crime_mobility`
+crime_mobility_census <- crime_mobility_census %>%
+  left_join(unemployment_cleaned, by = c("ladcd", 'ladnm', "year"))
+
+
+### BUSINESS UNITS - food and beverages ###
+nomis_food_bev_2020 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_food_bev.xlsx", 
+    sheet = "2020", range = "A8:I390")
+View(nomis_food_bev_2020)
+
+nomis_food_bev_2021 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_food_bev.xlsx", 
+    sheet = "2021", range = "A8:I390")
+View(nomis_food_bev_2021)
+
+nomis_food_bev_2022 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_food_bev.xlsx", 
+    sheet = "2022", range = "A8:I390")
+View(nomis_food_bev_2022)
+
+# 2020
+# Sum up the required columns for new categories
+nomis_food_bev_2020 <- nomis_food_bev_2020 %>%
+  mutate(
+    pubs_clubs = `56301 : Licensed clubs` + `56302 : Public houses and bars`,
+    other_food_bev = `56101 : Licensed restaurants` +
+                     `56102 : Unlicensed restaurants and cafes` +
+                     `56103 : Take away food shops and mobile food stands` +
+                     `56210 : Event catering activities` +
+                     `56290 : Other food service activities`
+  )
+
+# Select only the relevant columns for merging
+nomis_food_bev_2020_cleaned <- nomis_food_bev_2020 %>%
+  dplyr::select(ladcd, ladnm, pubs_clubs, other_food_bev)
+
+nomis_food_bev_2020 <- nomis_food_bev_2020_cleaned %>%
+  mutate(year = 2020)
+
+# 2021
+# Sum up the required columns for new categories
+nomis_food_bev_2021 <- nomis_food_bev_2021 %>%
+  mutate(
+    pubs_clubs = `56301 : Licensed clubs` + `56302 : Public houses and bars`,
+    other_food_bev = `56101 : Licensed restaurants` +
+                     `56102 : Unlicensed restaurants and cafes` +
+                     `56103 : Take away food shops and mobile food stands` +
+                     `56210 : Event catering activities` +
+                     `56290 : Other food service activities`
+  )
+
+# Select only the relevant columns for merging
+nomis_food_bev_2021_cleaned <- nomis_food_bev_2021 %>%
+  dplyr::select(ladcd, ladnm, pubs_clubs, other_food_bev)
+
+nomis_food_bev_2021 <- nomis_food_bev_2021_cleaned %>%
+  mutate(year = 2021)
+
+# 2022
+# Sum up the required columns for new categories
+nomis_food_bev_2022 <- nomis_food_bev_2022 %>%
+  mutate(
+    pubs_clubs = `56301 : Licensed clubs` + `56302 : Public houses and bars`,
+    other_food_bev = `56101 : Licensed restaurants` +
+                     `56102 : Unlicensed restaurants and cafes` +
+                     `56103 : Take away food shops and mobile food stands` +
+                     `56210 : Event catering activities` +
+                     `56290 : Other food service activities`
+  )
+
+# Select only the relevant columns for merging
+nomis_food_bev_2022_cleaned <- nomis_food_bev_2022 %>%
+  dplyr::select(ladcd, ladnm, pubs_clubs, other_food_bev)
+
+nomis_food_bev_2022 <- nomis_food_bev_2022_cleaned %>%
+  mutate(year = 2022)
+
+nomis_food_bev <- bind_rows(nomis_food_bev_2022,nomis_food_bev_2021,nomis_food_bev_2020)
+
+
+# Merge with crime data
+crime_mobility_census <- merge(crime_mobility_census, nomis_food_bev, by = c("ladcd", 'ladnm', "year"))
+
+### RETAIL ###
+
+nomis_retail_2020 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_retail.xlsx", 
+    sheet = "2020", range = "A8:AS390")
+View(nomis_retail)
+
+nomis_retail_2021 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_retail.xlsx", 
+    sheet = "2021", range = "A8:AS390")
+View(nomis_retail)
+
+nomis_retail_2022 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_retail.xlsx", 
+    sheet = "2022", range = "A8:AS390")
+View(nomis_retail)
+
+# 2020
+# Sum up the required columns for new categories
+nomis_retail_2020 <- nomis_retail_2020 %>%
+     mutate(retail = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_retail_2020_cleaned <- nomis_retail_2020 %>%
+  dplyr::select(ladcd, ladnm, retail)
+
+nomis_retail_2020 <- nomis_retail_2020_cleaned %>%
+  mutate(year = 2020)
+
+# 2021
+# Sum up the required columns for new categories
+nomis_retail_2021 <- nomis_retail_2021 %>%
+     mutate(retail = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_retail_2021_cleaned <- nomis_retail_2021 %>%
+  dplyr::select(ladcd, ladnm, retail)
+
+nomis_retail_2021 <- nomis_retail_2020_cleaned %>%
+  mutate(year = 2021)
+
+# 2022
+# Sum up the required columns for new categories
+nomis_retail_2022 <- nomis_retail_2022 %>%
+     mutate(retail = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_retail_2022_cleaned <- nomis_retail_2022 %>%
+  dplyr::select(ladcd, ladnm, retail)
+
+nomis_retail_2022 <- nomis_retail_2022_cleaned %>%
+  mutate(year = 2022)
+
+nomis_retail <- bind_rows(nomis_retail_2022,nomis_retail_2021,nomis_retail_2020)
+
+
+# Merge with crime data
+crime_mobility_census <- merge(crime_mobility_census, nomis_retail, by = c("ladcd", 'ladnm', "year"))
+
+## NOMIS RECREATION
+
+nomis_recreation_2020 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_recreation.xlsx", 
+    sheet = "2020", range = "A8:J390")
+
+nomis_recreation_2021 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_recreation.xlsx", 
+    sheet = "2021", range = "A8:J390")
+
+nomis_recreation_2022 <- read_excel("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/nomis_recreation.xlsx", 
+    sheet = "2022", range = "A8:J390")
+
+# 2020
+# Sum up the required columns for new categories
+nomis_recreation_2020 <- nomis_recreation_2020 %>%
+     mutate(recreation = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_recreation_2020_cleaned <- nomis_recreation_2020 %>%
+  dplyr::select(ladcd, ladnm, recreation)
+
+nomis_recreation_2020 <- nomis_recreation_2020_cleaned %>%
+  mutate(year = 2020)
+
+# 2021
+# Sum up the required columns for new categories
+nomis_recreation_2021 <- nomis_recreation_2021 %>%
+     mutate(recreation = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_recreation_2021_cleaned <- nomis_recreation_2021 %>%
+  dplyr::select(ladcd, ladnm, recreation)
+
+nomis_recreation_2021 <- nomis_recreation_2021_cleaned %>%
+  mutate(year = 2021)
+
+# 2022
+# Sum up the required columns for new categories
+nomis_recreation_2022 <- nomis_recreation_2022 %>%
+     mutate(recreation = rowSums(select(., -ladcd, -ladnm), na.rm = TRUE))
+
+# Select only the relevant columns for merging
+nomis_recreation_2022_cleaned <- nomis_recreation_2022 %>%
+  dplyr::select(ladcd, ladnm, recreation)
+
+nomis_recreation_2022 <- nomis_recreation_2022_cleaned %>%
+  mutate(year = 2022)
+
+nomis_recreation <- bind_rows(nomis_recreation_2022,nomis_recreation_2021,nomis_recreation_2020)
+
+
+# Merge with crime data
+crime_mobility_census <- merge(crime_mobility_census, nomis_recreation, by = c("ladcd", 'ladnm', "year"))
+
+
+write.csv(crime_mobility_census, file = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv", row.names = FALSE)
+
+```
+
+```{r data, include=FALSE}
+library(readr)
+library(MASS)
+library(QuantPsyc)
+library(DHARMa)
+library(dplyr)
+crime_mobility_census <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_census.csv")
+crime_mobility_merged <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/crime_data_merged.csv")
+
+```
+
+## Simple Models - covariates introduced
+```{r include=FALSE}
+
+# Burglary Check
+burglary_data <- crime_mobility_census %>% filter(crime_type == 'Burglary')
+burglary_simple <- glm.nb(total_crime_count ~ residential, data = burglary_data)
+
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+burglary_afe <- glm.nb(total_crime_count ~ residential + as.factor(ladcd), data = burglary_data)
+
+summary(burglary_afe)
+summary(burglary_simple)
+
+burglary_data <- crime_mobility_census %>% 
+                 filter(crime_type == 'Burglary') %>%
+                 mutate(reporting_rate = 0.595) # Add reporting rate as a constant
+
+burglary_data <- burglary_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+burglary_data <- burglary_data %>% filter(!is.na(lagged_crime_count))
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ residential +
+                          lagged_crime_count + 
+                          Population.Density..Persons.per.square.kilometre_sum +
+                                          mean_pay,
+                                        data = burglary_data)
+
+# Summarize the model
+residential_coefficient <- coef(updated_model)["residential"]
+print(residential_coefficient)
+
+
+```
+
+COEF IS ALMOST TWICE OF AFE COEF!!!!!! SOME NEED IMPROVEMENT!!!!
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=TRUE}
+# Vehicle Check
+vehicle_data <- crime_mobility_census %>% filter(crime_type == 'Vehicle crime')
+vehicle_simple <- glm.nb(total_crime_count ~ residential, data = vehicle_data)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+vehicle_afe <- glm.nb(total_crime_count ~ residential + as.factor(ladcd), data = burglary_data)
+
+summary(vehicle_afe)
+summary(vehicle_simple)
+
+residential_afe_coefficient <- coef(vehicle_afe)["residential"]
+print(residential_afe_coefficient)
+
+vehicle_data <- vehicle_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+vehicle_data <- vehicle_data %>% filter(!is.na(lagged_crime_count))
+
+
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ residential +
+                                          lagged_crime_count,
+                        data = vehicle_data)
+
+# Summarize the model
+residential_coefficient <- coef(updated_model)["residential"]
+print(residential_coefficient)
+
+```
+
+```{r include=FALSE}
+# Other theft Check
+othert_data <- crime_mobility_census %>% filter(crime_type == 'Other theft')
+othert_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = othert_data)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+othert_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = othert_data)
+
+summary(othert_afe)
+summary(othert_simple)
+
+retail_afe_coefficient <- coef(othert_afe)["retail_and_recreation"]
+print(retail_afe_coefficient)
+
+othert_data <- othert_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+othert_data <- othert_data %>% filter(!is.na(lagged_crime_count))
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ retail_and_recreation +
+                                          lagged_crime_count,
+                                        data = othert_data)
+
+# Summarize the model
+retail_coefficient <- coef(updated_model)["retail_and_recreation"]
+print(retail_coefficient)
+
+```
+
+```{r}
+# Shoplifting Check
+shop_data <- crime_mobility_census %>% filter(crime_type == 'Shoplifting')
+shop_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = shop_data)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+shop_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = shop_data)
+
+summary(shop_afe)
+summary(shop_simple)
+
+retail_afe_coefficient <- coef(shop_afe)["retail_and_recreation"]
+print(retail_afe_coefficient)
+
+shop_data <- shop_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+shop_data <- shop_data %>% filter(!is.na(lagged_crime_count))
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ retail_and_recreation +
+                                          lagged_crime_count + 
+                          mean_pay,
+                        data = shop_data)
+
+# Summarize the model
+retail_coefficient <- coef(updated_model)["retail_and_recreation"]
+print(retail_coefficient)
+```
+
+```{r}
+# Theft Check
+theft_data <- crime_mobility_census %>% filter(crime_type == 'Theft from the person')
+theft_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = theft_data)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+theft_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = theft_data)
+
+summary(theft_afe)
+summary(theft_simple)
+
+retail_afe_coefficient <- coef(theft_afe)["retail_and_recreation"]
+print(retail_afe_coefficient)
+
+theft_data <- theft_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+theft_data <- theft_data %>% filter(!is.na(lagged_crime_count))
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ retail_and_recreation +
+                                          lagged_crime_count + 
+                         search_count + 
+                          mean_pay,
+                        data = theft_data)
+
+# Summarize the model
+retail_coefficient <- coef(updated_model)["retail_and_recreation"]
+print(retail_coefficient)
+```
+
+```{r}
+#Vviolence Check
+violence_data <- crime_mobility_census %>% filter(crime_type == 'Violence and sexual offences')
+violence_simple <- glm.nb(total_crime_count ~ workplaces, data = violence_data)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+violence_afe <- glm.nb(total_crime_count ~ workplaces + as.factor(ladcd), data = violence_data)
+
+summary(violence_afe)
+summary(violence_simple)
+
+workplaces_afe_coefficient <- coef(violence_afe)["workplaces"]
+print(workplaces_afe_coefficient)
+
+violence_data <- violence_data %>%
+  group_by(ladcd) %>%
+  mutate(lagged_crime_count = lag(total_crime_count)) %>%
+  ungroup()
+
+# Remove the first observation for each local authority where the lagged value is NA
+violence_data <- violence_data %>% filter(!is.na(lagged_crime_count))
+
+ # Add selected covariates to the model
+updated_model <- glm.nb(total_crime_count ~ workplaces +
+                                          lagged_crime_count +
+                          Sex..Male_sum + 
+                          Hours.worked..Full.time..49.or.more.hours.worked_sum +
+                          Hours.worked..Full.time..31.to.48.hours.worked_sum +
+                          Economic.activity.status..Economically.inactive_sum,
+                        data = violence_data)
+
+# Summarize the model
+workplaces_coefficient <- coef(updated_model)["workplaces"]
+print(workplaces_coefficient)
+```
+
+## RANDOM INTERCEPT MODELS TO FIND CAUSE FOR DIFFERENCE
+```{r}
+# Load necessary libraries
+library(lme4)
+library(dplyr)
+library(purrr)
+
+# Prepare the data
+# Filter data for the selected crime types
+selected_crime_types <- c('Burglary', 'Vehicle crime', 'Other theft', 'Shoplifting', 'Theft from the person', 'Violence and sexual offences')
+filtered_data <- crime_mobility_census %>%
+  filter(crime_type %in% selected_crime_types)
+
+# Function to fit the multilevel model and extract random intercepts
+fit_multilevel_model <- function(data, crime_type) {
+  # Filter data for the specific crime type
+  crime_data <- data %>%
+    filter(crime_type == !!crime_type) %>%
+    arrange(ladcd, month)
+  
+  # Fit the multilevel model with only random intercepts
+  model <- glmer.nb(total_crime_count ~ (1 | ladcd), data = crime_data)
+  
+  # Extract random intercepts
+  random_intercepts <- ranef(model)$ladcd %>%
+    as.data.frame() %>%
+    rename(random_intercept = `(Intercept)`) %>%
+    mutate(crime_type = crime_type, ladcd = rownames(.))
+  
+  return(list(model = model, random_intercepts = random_intercepts))
+}
+
+# List of unique crime types
+crime_types <- unique(filtered_data$crime_type)
+
+# Apply the function to each selected crime type and combine results
+model_results <- map(crime_types, ~fit_multilevel_model(filtered_data, .x))
+
+# Extract models and random intercepts
+models_list <- map(model_results, "model")
+random_intercepts_list <- map(model_results, "random_intercepts")
+
+# Combine random intercepts into a single dataframe
+random_intercepts_df <- bind_rows(random_intercepts_list)
+
+# Save the results to a dataframe
+random_intercepts_df <- random_intercepts_df %>%
+  dplyr::select(ladcd, crime_type, random_intercept)
+
+# View the results
+print(random_intercepts_df)
+
+# Optionally, save the results to a CSV file
+write.csv(random_intercepts_df, "random_intercepts.csv", row.names = FALSE)
+
+# Function to extract and print variance of random effects for a model
+print_random_effects_variance <- function(model) {
+  varcorr <- VarCorr(model)
+  print(varcorr)
+  
+  # Extract the variance of the random intercept
+  variance <- attr(varcorr$ladcd, "stddev")^2
+  cat("Variance of random intercept (ladcd):", variance, "\n")
+}
+
+# Summary
+burglary_model_ri <- models_list[[which(crime_types == "Burglary")]]
+vehicle_model_ri <- models_list[[which(crime_types == "Vehicle crime")]]
+otheft_model_ri <- models_list[[which(crime_types == "Other theft")]]
+shop_model_ri <- models_list[[which(crime_types == "Shoplifting")]]
+theft_model_ri <- models_list[[which(crime_types == "Theft from the person")]]
+violence_model_ri <- models_list[[which(crime_types == "Violence and sexual offences")]]
+
+summary(burglary_model_ri)
+summary(vehicle_model_ri)
+summary(otheft_model_ri)
+summary(shop_model_ri)
+summary(theft_model_ri)
+summary(violence_model_ri)
+
+
+# Print variance of random effects for the Burglary model
+print_random_effects_variance(burglary_model_ri)
+
+
+
+
+```
+
+## ONLY FIXED EFFECT MODELS TO FIND HOW MUCH OF THE VARIANCE COME FROM DIFFERENCES BETWEEN LOCAL AUTHORITIES
+```{r}
+library(MASS)
+library(dplyr)
+library(purrr)
+library(tibble)
+# Set max.print option
+options(max.print = 6)
+
+# Prepare the data
+# Filter data for the selected crime types
+selected_crime_types <- c('Burglary', 'Vehicle crime', 'Other theft', 'Shoplifting', 'Theft from the person', 'Violence and sexual offences')
+filtered_data <- crime_mobility_census %>%
+  filter(crime_type %in% selected_crime_types)
+
+# Function to fit the fixed effects model and extract fixed effects
+fit_fixed_effects_model <- function(data, crime_type) {
+  # Filter data for the specific crime type
+  crime_data <- data %>%
+    filter(crime_type == !!crime_type) %>%
+    arrange(ladcd, month)
+  
+  # Fit the fixed effects model with only local authority fixed effects
+  model <- glm.nb(total_crime_count ~ as.factor(ladcd), data = crime_data)
+  
+# Extract fixed effects
+fixed_effects <- coef(model) %>%
+  as.data.frame() %>%
+  rownames_to_column("ladcd")
+
+# Rename the column
+names(fixed_effects)[2] <- "fixed_effect"
+
+# Add the crime type
+fixed_effects$crime_type <- crime_type
+  
+  return(list(model = model, fixed_effects = fixed_effects))
+}
+
+# Apply the function to each selected crime type and combine results
+model_results <- map(crime_types, ~fit_fixed_effects_model(filtered_data, .x))
+
+# Extract models and fixed effects
+models_list <- map(model_results, "model")
+fixed_effects_list <- map(model_results, "fixed_effects")
+
+# Combine fixed effects into a single dataframe
+fixed_effects_df <- bind_rows(fixed_effects_list)
+
+# Save the results to a dataframe
+fixed_effects_df <- fixed_effects_df %>%
+  dplyr::select(ladcd, crime_type, fixed_effect)
+
+# View the results
+print(fixed_effects_df)
+
+# Optionally, save the results to a CSV file
+write.csv(fixed_effects_df, "fixed_effects.csv", row.names = FALSE)
+
+# Summary
+burglary_model_fe <- models_list[[which(crime_types == "Burglary")]]
+vehicle_model_fe <- models_list[[which(crime_types == "Vehicle crime")]]
+otheft_model_fe <- models_list[[which(crime_types == "Other theft")]]
+shop_model_fe <- models_list[[which(crime_types == "Shoplifting")]]
+theft_model_fe <- models_list[[which(crime_types == "Theft from the person")]]
+violence_model_fe <- models_list[[which(crime_types == "Violence and sexual offences")]]
+
+summary(burglary_model_fe)
+summary(vehicle_model_fe)
+summary(otheft_model_fe)
+summary(shop_model_fe)
+summary(theft_model_fe)
+summary(violence_model_fe)
+```
+
+
+### SAVE BOTH RANDOM INTERCEPT AND FIXED EFFECT TO SAME FILE
+```{r}
+# Function to save model summary to a text file
+save_model_summary <- function(model, model_name, crime_type, dir_path) {
+  # Capture the output of the summary function
+  summary_text <- capture.output(summary(model))
+  
+  # Add a header with the model name and crime type
+  header <- paste("Summary of", model_name, "for", crime_type, ":\n")
+  summary_text <- c(header, summary_text)
+  
+  # Create the directory if it does not exist
+  if (!dir.exists(dir_path)) {
+    dir.create(dir_path, recursive = TRUE)
+  }
+  
+  # Create the file name
+  file_name <- paste0(dir_path, model_name, "_", crime_type, "_summary.txt")
+  
+  # Write the summary text to the file
+  writeLines(summary_text, file_name, sep = "\n", useBytes = TRUE)
+}
+
+# Apply the function to each model
+for (i in seq_along(crime_types)) {
+  # Get the crime type
+  crime_type <- crime_types[i]
+  
+  # Get the models
+  ri_model <- models_list[[i]]
+  fe_model <- models_list[[i]]
+  
+  # Create the directory path
+  dir_path <- paste0("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/", crime_type, "/")
+  
+  # Save the summaries to a text file
+  save_model_summary(ri_model, "random_intercept_model", crime_type, dir_path)
+  save_model_summary(fe_model, "fixed_effect_model", crime_type, dir_path)
+}
+```
+
+#correlation
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(tidyr)
+crime_mobility_merged <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/crime_mobility_merged.csv")
+
+# Frequency Distribution of Crime Types
+crime_freq <- crime_mobility_merged%>%
+  group_by(crime_type) %>%
+  summarise(crime_rate = sum(avg_crime_rate)) %>%
+  arrange(desc(crime_rate))
+
+print(crime_freq)
+
+# Temporal Trends in Crime Rates
+monthly_crime_rates <- crime_mobility_merged %>%
+  group_by(month, crime_type) %>%
+  summarise(avg_crime_rate = mean(avg_crime_rate),
+            total_crime_count = sum(total_crime_count))
+
+ggplot(monthly_crime_rates, aes(x = month, y = avg_crime_rate, colour = crime_type)) +
+  geom_line() +
+  labs(title = "National Level Monthly Crime Rates", x = "Month", y = "Average Crime Rate per 1000 People") +
+  theme_minimal()
+
+
+# Missing entries
+unique_combinations <- expand.grid(month = unique(crime_mobility_merged$month),
+                                   crime_type = unique(crime_mobility_merged$crime_type))
+
+missing_data <- left_join(unique_combinations, monthly_crime_rates, by = c("month", "crime_type"))
+
+missing_entries <- missing_data %>%
+  filter(is.na(total_crime_count))
+
+print(missing_entries)
+
+# Missing in crime rates according to lad
+complete_combinations <- expand.grid(ladnm = unique(crime_mobility_merged$ladnm),
+                                     month = unique(crime_mobility_merged$month),
+                                     crime_type = unique(crime_mobility_merged$crime_type))
+
+crime_mobility_unique <- crime_mobility_merged %>%
+  distinct(ladnm, month, crime_type, avg_crime_rate)
+
+missing_combinations <- left_join(complete_combinations, crime_mobility_unique, 
+                                  by = c("ladnm", "month", "crime_type")) %>%
+  filter(is.na(avg_crime_rate)) 
+
+# If you want to see the actual data
+print(missing_combinations)
+
+# Spatial Variation of Crime Rates
+lad_crime_rates <- crime_mobility_merged %>%
+  group_by(ladnm) %>%
+  summarise(avg_lad_crime_rate = mean(avg_crime_rate)) %>%
+  arrange(desc(avg_lad_crime_rate))
+
+top_lads <- head(lad_crime_rates, 10)
+print(top_lads)
+
+# Correlation Between Mobility Metrics
+mobility_metrics <- crime_mobility_merged %>%
+  dplyr::select(retail_and_recreation, grocery_and_pharmacy, parks, transit_stations, workplaces, residential)
+
+correlation_matrix <- cor(mobility_metrics, use = "complete.obs")
+
+print(correlation_matrix)
+
+# Save the correlation matrix to a CSV file
+write.csv(correlation_matrix, file = "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/correlation_matrix.csv", row.names = TRUE)
+
+correlation_matrix <- matrix(
+  c(1, 0.804, 0.453, 0.691, 0.757, 0.831,
+    0.804, 1, 0.476, 0.624, 0.789, 0.856,
+    0.453, 0.476, 1, 0.539, 0.602, 0.675,
+    0.691, 0.624, 0.539, 1, 0.763, 0.834,
+    0.757, 0.789, 0.602, 0.763, 1, 0.891,
+    0.831, 0.856, 0.675, 0.834, 0.891, 1),
+  nrow = 6, ncol = 6,
+  dimnames = list(
+    c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential"),
+    c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+  )
+)
+
+# Convert the matrix to a data frame suitable for ggplot2
+melted_corr <- melt(correlation_matrix)
+
+# Create the heatmap
+national_mobility_cor <- ggplot(data = melted_corr, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +  # This adds the tiles for the heatmap
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1, 1), space = "Lab", name="Correlation") +
+  labs(title = "Heatmap of Correlation Matrix", x = "Index", y = "Index") +
+  theme_minimal() +  # Minimal theme for a cleaner look
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better readability
+
+# Optionally, save the plot
+ggsave("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/national_mobility_cor.png", width = 8, height = 6)
+
+# CRIME- MOBILITY CORRELATIONS
+
+# Aggregate crime data to national level by crime type and month
+national_crime_data <- crime_mobility_merged %>%
+  group_by(crime_type, month) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count, na.rm = TRUE),
+    avg_crime_rate = mean(avg_crime_rate, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Aggregate mobility data to national level by month
+national_mobility_data <- crime_mobility_merged %>%
+  group_by(month) %>%
+  summarise(
+    retail_and_recreation = mean(retail_and_recreation, na.rm = TRUE),
+    grocery_and_pharmacy = mean(grocery_and_pharmacy, na.rm = TRUE),
+    parks = mean(parks, na.rm = TRUE),
+    transit_stations = mean(transit_stations, na.rm = TRUE),
+    workplaces = mean(workplaces, na.rm = TRUE),
+    residential = mean(residential, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Join the national crime data with the national mobility data
+national_crime_mobility <- left_join(national_crime_data, national_mobility_data, by = "month")
+
+list_of_crime_data <- split(national_crime_mobility, national_crime_mobility$crime_type)
+
+# Function to calculate Spearman correlation for each crime type
+calculate_correlations <- function(crime_data, crime_type) {
+  # Initialize an empty data frame to store results
+  correlations <- data.frame(
+    Crime_Type = character(),
+    Mobility_Index = character(),
+    Correlation = numeric(),
+    P_Value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # List of mobility indices
+  mobility_indices <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+  
+  # Calculate correlation and p-value for each mobility index
+  for (mobility_index in mobility_indices) {
+    test_result <- cor.test(crime_data[[mobility_index]], crime_data$total_crime_count, method = "spearman")
+    correlations <- rbind(correlations, data.frame(
+      Crime_Type = crime_type,
+      Mobility_Index = mobility_index,
+      Correlation = test_result$estimate,
+      P_Value = test_result$p.value
+    ))
+  }
+  
+  return(correlations)
+}
+
+# Apply the function to each crime data subset
+correlation_results <- lapply(names(list_of_crime_data), function(crime_type) {
+  calculate_correlations(list_of_crime_data[[crime_type]], crime_type)
+})
+
+# Combine all results into one data frame
+correlation_na_df <- do.call(rbind, correlation_results)
+
+# Add Significance level 
+correlation_na_df$Significance <- ifelse(correlation_na_df$P_Value < 0.001, "***",
+                                  ifelse(correlation_na_df$P_Value < 0.01, "**",
+                                         ifelse(correlation_na_df$P_Value < 0.05, "*", "")))
+
+correlation_na_df$Crime_Type <- factor(correlation_na_df$Crime_Type, levels = rev(sort(unique(correlation_na_df$Crime_Type))))
+
+# Create the heatmap
+national_mobility_cor <- ggplot(correlation_na_df, aes(x = Mobility_Index, y = Crime_Type, fill = Correlation)) +
+  geom_tile() + 
+  geom_text(aes(label = Significance), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name="Correlation") +
+  theme_minimal() +  # Minimal theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x labels for better visibility
+  labs(x = "Mobility Index", y = "Crime Type", title = "Correlation between Crime Types and Mobility") +
+  coord_fixed(ratio = 1)  # Keep aspect ratio of tiles to 1
+
+wide_df <- correlation_na_df %>%
+  dplyr::select(Crime_Type, Mobility_Index, Correlation) %>% 
+  pivot_wider(
+    names_from = Mobility_Index,   # This will create new columns based on unique values in 'Mobility_Index'
+    values_from = c(Correlation),  # Values to fill the new columns
+    names_sep = "_"   # Separator to distinguish between the different measured attributes in column names
+  )
+
+# Display the plot
+ggsave(national_mobility_cor, file = "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/national_mobility_cor.png", width = 10, height = 8)  # Save the plot as a
+
+write.csv(wide_df, file = "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/correlation_df_national.csv", row.names = TRUE)
+
+## Non-Aggregated Correlation
+
+list_of_crime_data <- split(crime_mobility_merged, crime_mobility_merged$crime_type)
+
+# Function to calculate Spearman correlation for each crime type
+calculate_correlations <- function(crime_data, crime_type) {
+  # Initialize an empty data frame to store results
+  correlations <- data.frame(
+    Crime_Type = character(),
+    Mobility_Index = character(),
+    Correlation = numeric(),
+    P_Value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # List of mobility indices
+  mobility_indices <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+  
+  # Calculate correlation and p-value for each mobility index
+  for (mobility_index in mobility_indices) {
+    test_result <- cor.test(crime_data[[mobility_index]], crime_data$total_crime_count, method = "spearman")
+    # Append to the data frame
+    correlations <- rbind(correlations, data.frame(
+      Crime_Type = crime_type,
+      Mobility_Index = mobility_index,
+      Correlation = test_result$estimate,
+      P_Value = test_result$p.value
+    ))
+  }
+  
+  return(correlations)
+}
+
+# Apply the function to each crime data subset
+correlation_results <- lapply(names(list_of_crime_data), function(crime_type) {
+  calculate_correlations(list_of_crime_data[[crime_type]], crime_type)
+})
+
+# Combine all results into one data frame
+correlation_df <- do.call(rbind, correlation_results)
+
+# Add Significance level 
+correlation_df$Significance <- ifelse(correlation_df$P_Value < 0.001, "***",
+                                  ifelse(correlation_df$P_Value < 0.01, "**",
+                                         ifelse(correlation_df$P_Value < 0.05, "*", "")))
+
+correlation_df$Crime_Type <- factor(correlation_df$Crime_Type, levels = rev(sort(unique(correlation_df$Crime_Type))))
+
+# Create the heatmap
+mobility_crime_cor <- ggplot(correlation_df, aes(x = Mobility_Index, y = Crime_Type, fill = Correlation)) +
+  geom_tile() +
+    geom_text(aes(label = Significance), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Mobility Index", y = "Crime Type", title = "Correlation between Crime Types and Mobility") +
+  coord_fixed(ratio = 1)  
+
+wide_df <- correlation_df %>%
+  dplyr::select(Crime_Type, Mobility_Index, Correlation) %>% 
+  pivot_wider(
+    names_from = Mobility_Index,   # This will create new columns based on unique values in 'Mobility_Index'
+    values_from = c(Correlation),  # Values to fill the new columns
+    names_sep = "_"   # Separator to distinguish between the different measured attributes in column names
+  )
+
+# Display the plot
+ggsave(mobility_crime_cor, file = "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/correlation_heatmap.png", width = 10, height = 8)  # Save the plot as a
+
+write.csv(wide_df, file = "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/correlation_matrix.csv", row.names = TRUE)
+
+```
+
+```{r Crime mobility pairs, echo=FALSE}
+
+```
+
+# Build models
+```{r}
+library(readr)
+library(dplyr)
+library(QuantPsyc)
+library(car)
+library(plm)
+library(ggplot2)
+library(MASS) # negative binomial regression
+library(pscl)
+library(AER)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2")
+crime_mobility_merged <- read_csv("crime_mobility_merged.csv")
+View(crime_mobility_merged)
+
+# BURGLARY MODEL
+
+# Filter the dataset for "Burglary" 
+burglary_data <- crime_mobility_merged %>%
+  filter(crime_type == 'Burglary')  
+
+# Model 1: Simple linear regression with log transformation
+# Fit a model with residential mobility as the main predictor
+# Fit a Negative Binomial model
+burglary_simple <- glm.nb(total_crime_count ~ residential, data = burglary_data)
+summary(burglary_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = burglary_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+burglary_afe <- glm.nb(total_crime_count ~ residential + as.factor(ladcd), data = burglary_data)
+summary(burglary_afe)
+
+# For Model 1
+exp(0.001188)  # Effect size for residential mobility in Model 1
+
+# For Model 2
+exp(-0.0066399)  # Effect size for residential mobility in Model 2
+
+fitted_values <- fitted(burglary_afe)
+residuals <- residuals(burglary_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ residential, family=poisson, data=burglary_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(burglary_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(burglary_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(burglary_simple, burglary_afe)
+
+# Model Validation
+# Results
+library(stargazer)
+stargazer(burglary_simple, burglary_afe, type="text")
+
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/Burglary/")
+writeLines(capture.output(summary(burglary_simple)), "burglary_simple_summary.txt")
+writeLines(capture.output(summary(burglary_afe)), "burglary_afe_model_summary.txt")
+pdf("burglary_simple_diagnostics.pdf")
+plot(burglary_simple)
+dev.off()
+pdf("burglary_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(burglary_afe), y = residuals(burglary_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+```
+
+## Vehicle Crime
+```{r}
+# Vehcile Crime MODEL
+
+# Model 1: Simple negative binomial regression
+vehicle_simple <- glm.nb(total_crime_count ~ residential, data = vehicle_data)
+summary(vehicle_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = vehicle_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+vehicle_afe <- glm.nb(total_crime_count ~ residential + as.factor(ladcd), data = vehicle_data)
+summary(vehicle_afe)
+
+# For Model 1
+exp(0.001319)  # Effect size for residential mobility in Model 1
+
+# For Model 2
+exp(-0.0164696)  # Effect size for residential mobility in Model 2
+
+fitted_values <- fitted(vehicle_afe)
+residuals <- residuals(vehicle_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ residential, family=poisson, data=vehicle_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(vehicle_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(vehicle_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(vehicle_simple, vehicle_afe)
+
+# Model Validation
+# Results
+library(stargazer)
+stargazer(vehicle_simple, vehicle_afe, type="text")
+
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/VehicleCrime/")
+writeLines(capture.output(summary(vehicle_simple)), "vehicle_simple_summary.txt")
+writeLines(capture.output(summary(vehicle_afe)), "vehicle_afe_model_summary.txt")
+pdf("vehicle_simple_diagnostics.pdf")
+plot(vehicle_simple)
+dev.off()
+pdf("vehicle_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(vehicle_afe), y = residuals(vehicle_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+```
+
+## Other Theft
+```{r}
+# OTHER THEFT MODEL
+
+# Model 1: Simple negative binomial regression
+otheft_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = other_theft_data)
+summary(otheft_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = otheft_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+otheft_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = other_theft_data)
+summary(otheft_afe)
+
+# For Model 1
+exp(-0.0024847)  # Effect size for retail_and_recreation mobility in Model 1
+
+# For Model 2
+exp(6.298e-03)  # Effect size for retail_and_recreation mobility in Model 2
+
+fitted_values <- fitted(otheft_afe)
+residuals <- residuals(otheft_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ retail_and_recreation, family=poisson, data=other_theft_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(otheft_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(otheft_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(otheft_simple, otheft_afe)
+
+# Model Validation
+# Results
+library(stargazer)
+stargazer(otheft_simple, otheft_afe, type="text")
+
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/OtherTheft/")
+writeLines(capture.output(summary(otheft_simple)), "otheft_simple_summary.txt")
+writeLines(capture.output(summary(otheft_afe)), "otheft_afe_model_summary.txt")
+pdf("otheft_simple_diagnostics.pdf")
+plot(otheft_simple)
+dev.off()
+pdf("otheft_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(otheft_afe), y = residuals(otheft_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+```
+
+## Shoplifting 
+```{r}
+# SHOPLIFTING MODEL
+
+# Model 1: Simple negative binomial regression
+shoplifting_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = shoplifting_data)
+summary(shoplifting_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = shoplifting_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+shoplifting_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = shoplifting_data)
+summary(shoplifting_afe)
+
+# For Model 1
+exp(-0.0003399)  # Effect size for retail_and_recreation mobility in Model 1
+
+# For Model 2
+exp(0.0066150)  # Effect size for retail_and_recreation mobility in Model 2
+
+fitted_values <- fitted(shoplifting_afe)
+residuals <- residuals(shoplifting_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ retail_and_recreation, family=poisson, data=shoplifting_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(shoplifting_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(shoplifting_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(shoplifting_simple, shoplifting_afe)
+
+# Model Validation
+# Results
+library(stargazer)
+stargazer(shoplifting_simple, shoplifting_afe, type="text")
+
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/Shoplifting/")
+writeLines(capture.output(summary(shoplifting_simple)), "shoplifting_simple_summary.txt")
+writeLines(capture.output(summary(shoplifting_afe)), "shoplifting_afe_model_summary.txt")
+pdf("shoplifting_simple_diagnostics.pdf")
+plot(shoplifting_simple)
+dev.off()
+pdf("shoplifting_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(shoplifting_afe), y = residuals(shoplifting_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+```
+
+# Theft from person
+```{r}
+
+
+# Model 1: Simple negative binomial regression
+theft_simple <- glm.nb(total_crime_count ~ retail_and_recreation, data = theft_data)
+summary(theft_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = theft_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+theft_afe <- glm.nb(total_crime_count ~ retail_and_recreation + as.factor(ladcd), data = theft_data)
+summary(theft_afe)
+
+# For Model 1
+exp(-0.0173635)  # Effect size for retail_and_recreation mobility in Model 1
+
+# For Model 2
+exp(0.0134749)  # Effect size for retail_and_recreation mobility in Model 2
+
+fitted_values <- fitted(theft_afe)
+residuals <- residuals(theft_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ retail_and_recreation, family=poisson, data=theft_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(theft_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(theft_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(theft_simple, theft_afe)
+
+# Model Validation
+# Results
+stargazer(theft_simple, theft_afe, type="text")
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/TheftPerson/")
+writeLines(capture.output(summary(theft_simple)), "theft_simple_model_summary.txt")
+writeLines(capture.output(summary(theft_afe)), "theft_afe_model_summary.txt")
+pdf("theft_simple_diagnostics.pdf")
+plot(theft_simple)
+dev.off()
+pdf("theft_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(theft_afe), y = residuals(theft_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+```
+
+# Violence & sexual offences
+```{r}
+# VIOLENCE & SEX OFFENCES
+
+
+
+# Model 1: Simple negative binomial regression
+violence_simple <- glm.nb(total_crime_count ~ workplaces, data = violence_data)
+summary(violence_simple)
+n_sim <- 250
+simulationOutput <- simulateResiduals(fittedModel = violence_simple, n = n_sim)
+  plot(simulationOutput, asFactor = F)
+
+# Model 2: Add area fixed effects by including 'ladcd' as a factor
+violence_afe <- glm.nb(total_crime_count ~ workplaces + as.factor(ladcd), data = violence_data)
+summary(violence_afe)
+
+# For Model 1
+exp(0.0042033) # Effect size for retail_and_recreation mobility in Model 1
+
+# For Model 2
+exp(0.0063511) # Effect size for workplaces mobility in Model 2
+
+fitted_values <- fitted(violence_afe)
+residuals <- residuals(violence_afe)
+
+# Model Diagnostics
+## Overdispersion
+poisson_model <- glm(total_crime_count ~ workplaces, family=poisson, data=violence_data)
+sum_deviance_poisson <- sum(residuals(poisson_model, type="deviance")^2)
+df <- df.residual(poisson_model)
+overdispersion_factor <- sum_deviance_poisson / df
+print(overdispersion_factor)  # Values significantly greater than 1 suggest overdispersion.
+
+## Residuals
+par(mfrow=c(1,2))
+plot(residuals(violence_simple, type = "pearson"), main="Residuals of Model 1")
+plot(residuals(violence_afe, type = "pearson"), main="Residuals of Model 2")
+
+## Goodness of Fit
+AIC(violence_simple, violence_afe)
+
+# Model Validation
+# Results
+stargazer(violence_simple, violence_afe, type="text")
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/Violence&Sex/")
+writeLines(capture.output(summary(violence_simple)), "violence_simple_model_summary.txt")
+writeLines(capture.output(summary(violence_afe)), "violence_afe_model_summary.txt")
+pdf("violence_simple_model_diagnostics.pdf")
+plot(violence_simple)
+dev.off()
+pdf("violence_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(violence_afe), y = residuals(violence_afe))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+```
+
+# Coefficient charts
+```{r}
+library(tidyverse)
+library(broom)
+library(plm)
+
+extract_and_transform <- function(model, model_type, crime_type) {
+  coefs <- coef(summary(model))[, "Estimate"] 
+  mobility_metrics <- c("residential", "retail_and_recreation", "workplaces")
+  
+  mobility_present <- names(coefs) %in% mobility_metrics
+
+  if (any(mobility_present)) {
+    data.frame(
+      crime_type = crime_type,
+      mobility_metric = names(coefs[mobility_present]),
+      percent_change = (exp(coefs[mobility_present]) - 1) * 100,
+      model_type = model_type
+    )
+  } else {
+    data.frame(
+      crime_type = character(0),
+      mobility_metric = character(0),
+      percent_change = numeric(0),
+      model_type = character(0)
+    )
+  }
+}
+
+
+# Aplying function to all models
+results <- bind_rows(
+  extract_and_transform(burglary_simple, "Simple", "Burglary - Residential"),
+  extract_and_transform(burglary_afe, "Fixed Effect", "Burglary - Residential"),
+      extract_and_transform(vehicle_simple, "Simple", "Vehicle - Residential"),
+  extract_and_transform(vehicle_afe, "Fixed Effect", "Vehicle - Residential"),
+   extract_and_transform(otheft_simple, "Simple", "Other Theft - Retail\n&\nRecreation"),
+  extract_and_transform(otheft_afe, "Fixed Effect", "Other Theft - Retail\n&\nRecreation"),
+    extract_and_transform(shoplifting_simple, "Simple", "Shoplifting - Retail\n&\nRecreation"),
+  extract_and_transform(shoplifting_afe, "Fixed Effect", "Shoplifting - Retail\n&\nRecreation"),
+    extract_and_transform(theft_simple, "Simple", "Theft - Retail\n&\nRecreation"),
+  extract_and_transform(theft_afe, "Fixed Effect", "Theft - Retail\n&\nRecreation"),
+    extract_and_transform(violence_simple, "Simple", "Violence & Sex Offences - Workplaces"),
+  extract_and_transform(violence_afe, "Fixed Effect", "Violence & Sex Offences - Workplaces")
+)
+
+results$signif <- c("", "***", "", "***", "", "***", "***", "***", "***", "***", "***", "***")
+
+# Creating the plot
+mob_effect_glm <- ggplot(results, aes(x = crime_type, y = percent_change, color = model_type)) +
+  geom_point(size = 5) +  
+  geom_hline(yintercept = 0, size=1.2)+
+  #geom_text(aes(label = signif), size = 8, nudge_y = 0.01, hjust = -0.3, vjust = 0.5, color = "black") + 
+  scale_y_continuous(breaks = seq(-2, 2, by = 0.2)) + 
+  labs(title = "Effect of Mobility on log Crime Rate by Crime Type and Mobility Metrics",
+       x = "", y = "Effect Size\n(%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5, size = 18),  
+        axis.text.y = element_text(size = 18),
+        axis.title.y = element_text(angle = 0, size = 16, hjust = 0.5, vjust = 0.5),
+        plot.title = element_text(hjust = 0.5, size = 24),
+        legend.text = element_text(size = 16),
+        legend.title = element_blank()) +  
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+
+ggsave(mob_effect_glm, file = '~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/mob_effect_glm.png', width = 12, height = 8, dpi = 300 )
+```
+
+
+# first models - without nomis la charactesitics data
+```{r}
+library(readr)
+library(dplyr)
+library(QuantPsyc)
+library(car)
+library(plm)
+library(ggplot2)
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models")
+crime_mobility_census <- read_csv("data/crime_mobility_census.csv")
+View(crime_mobility_census)
+
+  
+# ASB 
+
+# Filter the dataset for "ASB" 
+asb_data <- crime_mobility_census %>%
+  filter(crime_type == "Anti-social behaviour")  
+
+# Model 1: Simple linear regression with log transformation
+asb_model1 <- lm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + 
+    transit_stations + month + search_count + mean_pay, 
+    data = asb_data)
+
+
+# Summary and beta coefficients for Model 1
+summary(asb_model1)
+lm.beta(asb_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+asb_model2 <- lm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + 
+    transit_stations + month + sex_male_sum + population_density_persons_per_square_kilometre_sum, 
+    data = asb_data)
+
+# Summary and beta coefficients for Model 2
+summary(asb_model2)
+lm.beta(asb_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(asb_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_asb <- pdata.frame(asb_data, index = c("ladcd", "month"))
+asb_afe_model <- plm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + 
+    transit_stations + month + mean_pay + search_count, data = pdata_asb, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(asb_afe_model)
+
+fitted_values <- fitted(asb_afe_model)
+residuals <- residuals(asb_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/ASB/")
+writeLines(capture.output(summary(asb_model1)), "asb_model1_summary.txt")
+#writeLines(capture.output(summary(asb_model2)), "asb_model2_summary.txt")
+writeLines(capture.output(summary(asb_afe_model)), "asb_afe_model_summary.txt")
+pdf("asb_model1_diagnostics.pdf")
+plot(asb_model1)
+dev.off()
+#pdf("asb_model2_diagnostics.pdf")
+#plot(asb_model2)
+#dev.off()
+pdf("asb_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(asb_afe_model), y = residuals(asb_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# BIKE THEFT
+
+# Filter the dataset for "Bike Theft" 
+bike_data <- crime_mobility_census %>%
+  filter(crime_type == 'Bicycle theft')  
+
+# Model 1: Simple linear regression with log transformation
+bike_model1 <- lm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + transit_stations + month + mean_pay + search_count, 
+    data = bike_data)
+
+
+# Summary and beta coefficients for Model 1
+summary(bike_model1)
+lm.beta(bike_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+bike_model2 <- lm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + 
+    transit_stations + month + sex_male_sum + method_of_travel_to_workplace_bicycle_sum + 
+    population_density_persons_per_square_kilometre_sum + `accommodation_type_part_of_a_converted_or_shared_house,_including_bedsits_sum` + 
+    `accommodation_type_part_of_another_converted_building,_for_example,_former_school,_church_or_warehouse_sum`, 
+    data = bike_data)
+
+# Summary and beta coefficients for Model 2
+summary(bike_model2)
+lm.beta(bike_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(bike_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_bike <- pdata.frame(bike_data, index = c("ladcd", "month"))
+bike_afe_model <- plm(formula = log(avg_crime_rate) ~ parks + retail_and_recreation + transit_stations + method_of_travel_to_workplace_bicycle_sum + month + mean_pay, data = pdata_bike, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(bike_afe_model)
+
+fitted_values <- fitted(bike_afe_model)
+residuals <- residuals(bike_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Bike Theft/")
+writeLines(capture.output(summary(bike_model1)), "bike_model1_summary.txt")
+#writeLines(capture.output(summary(bike_model2)), "bike_model2_summary.txt")
+writeLines(capture.output(summary(bike_afe_model)), "bike_afe_model_summary.txt")
+pdf("bike_model1_diagnostics.pdf")
+plot(bike_model1)
+dev.off()
+#pdf("bike_model2_diagnostics.pdf")
+#plot(bike_model2)
+#dev.off()
+pdf("bike_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(bike_afe_model), y = residuals(bike_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# BURGLARY MODEL
+
+# Filter the dataset for "Burglary" 
+burglary_data <- crime_mobility_merged %>%
+  filter(crime_type == 'Burglary')  
+
+# Model 1: Simple linear regression with log transformation
+burglary_model1 <- lm(formula = log(avg_crime_rate) ~ residential + grocery_and_pharmacy + workplaces + month + mean_pay + age_18_24 + unemployment_rate, 
+    data = burglary_data)
+
+# Summary and beta coefficients for Model 1
+summary(burglary_model1)
+lm.beta(burglary_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+burglary_model2 <- lm(formula = log(avg_crime_rate) ~ residential + residence_type_lives_in_a_communal_establishment_sum + 
+    population_density_persons_per_square_kilometre_sum + `accommodation_type_part_of_a_converted_or_shared_house,_including_bedsits_sum` + 
+    economic_activity_status_economically_inactive_looking_after_home_or_family_sum + 
+    month, 
+    data = burglary_data)
+
+# Summary and beta coefficients for Model 2
+summary(burglary_model2)
+lm.beta(burglary_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(burglary_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_burglary <- pdata.frame(burglary_data, index = c("ladcd", "month"))
+burglary_afe_model <- plm(formula = log(avg_crime_rate) ~ residential + grocery_and_pharmacy + workplaces + month + mean_pay + age_18_24 + unemployment_rate, data = pdata_burglary, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(burglary_afe_model)
+
+fitted_values <- fitted(burglary_afe_model)
+residuals <- residuals(burglary_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Burglary/")
+writeLines(capture.output(summary(burglary_model1)), "burglary_model1_summary.txt")
+#writeLines(capture.output(summary(burglary_model2)), "burglary_model2_summary.txt")
+writeLines(capture.output(summary(burglary_afe_model)), "burglary_afe_model_summary.txt")
+pdf("burglary_model1_diagnostics.pdf")
+plot(burglary_model1)
+dev.off()
+#pdf("burglary_model2_diagnostics.pdf")
+#plot(burglary_model2)
+#dev.off()
+pdf("burglary_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(burglary_afe_model), y = residuals(burglary_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# DAMAGE & ARSON
+
+arson_data <- crime_mobility_census %>%
+  filter(crime_type == "Criminal damage and arson")
+
+arson_model1 <- lm(log(avg_crime_rate) ~ residential + parks + retail_and_recreation + 
+                     month + mean_pay + search_count, 
+                   data = arson_data)
+
+summary(arson_model1)
+lm.beta(arson_model1)
+
+arson_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = arson_data
+)
+
+summary(arson_model2)
+lm.beta(arson_model2)
+
+# Calculate VIF
+vif_values <- vif(arson_model2)
+
+# Print the VIF values
+print(vif_values)
+
+# fixed effect
+pdata_arson <- pdata.frame(arson_data, index = c("ladcd", "month"))
+
+arson_afe_model <- plm(log(avg_crime_rate) ~ residential + parks + retail_and_recreation + 
+    month + mean_pay + search_count,
+                      data = pdata_arson, effect = "individual")
+
+summary(arson_afe_model)
+
+fitted_values <- fitted(arson_afe_model)
+residuals <- residuals(arson_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Damage&Arson/")
+writeLines(capture.output(summary(arson_model1)), "arson_model1_summary.txt")
+#writeLines(capture.output(summary(arson_model2)), "arson_model2_summary.txt")
+writeLines(capture.output(summary(arson_afe_model)), "arson_afe_model_summary.txt")
+cat("Model summaries have been saved to text files in ")
+pdf("arson_model1_diagnostics.pdf")
+plot(arson_model1)
+dev.off()
+#pdf("arson_model2_diagnostics.pdf")
+#plot(arson_model2)
+#dev.off()
+pdf("arson_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted_values, y = residuals)) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# DRUGS
+
+# Filter the dataset for "Drugs" crime type
+drugs_data <- crime_mobility_census %>%
+  filter(crime_type == "Drugs")
+
+# Model 1: Simple linear regression with log transformation
+drugs_model1 <- lm(log(avg_crime_rate) ~ residential + retail_and_recreation + transit_stations + 
+                     month + search_count + mean_pay, 
+                   data = drugs_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(drugs_model1)
+lm.beta(drugs_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+drugs_model2 <- lm(log(avg_crime_rate) ~ residential + transit_stations + parks + population_density_persons_per_square_kilometre_sum +
+    month + sex_male_sum + 
+  economic_activity_status_economically_inactive_sum + `accommodation_type_in_a_purpose-built_block_of_flats_or_tenement_sum` +
+    `accommodation_type_part_of_another_converted_building,_for_example,_former_school,_church_or_warehouse_sum` +
+    `economic_activity_status_economically_active_(excluding_full-time_students)_sum` +
+   method_of_travel_to_workplace_work_mainly_at_or_from_home_sum,
+  data = drugs_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(drugs_model2)
+lm.beta(drugs_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(drugs_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_drugs <- pdata.frame(drugs_data, index = c("ladcd", "month"))
+drugs_afe_model <- plm(log(avg_crime_rate) ~ residential + retail_and_recreation + transit_stations +
+    month  + mean_pay + search_count,
+                      data = pdata_drugs, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(drugs_afe_model)
+
+fitted_values <- fitted(drugs_afe_model)
+residuals <- residuals(drugs_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Drugs/")
+writeLines(capture.output(summary(drugs_model1)), "drugs_model1_summary.txt")
+#writeLines(capture.output(summary(drugs_model2)), "drugs_model2_summary.txt")
+writeLines(capture.output(summary(drugs_afe_model)), "drugs_afe_model_summary.txt")
+pdf("drugs_model1_diagnostics.pdf")
+plot(drugs_model1)
+dev.off()
+#pdf("drugs_model2_diagnostics.pdf")
+#plot(drugs_model2)
+#dev.off()
+pdf("drugs_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(drugs_afe_model), y = residuals(drugs_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# OTHER CRIME MODEL
+
+# Filter the dataset for "Other crime" crime type
+other_crime_data <- crime_mobility_census %>%
+  filter(crime_type == "Other crime")
+
+# Model 1: Simple linear regression with log transformation
+other_crime_model1 <- lm(log(avg_crime_rate) ~ retail_and_recreation + transit_stations +
+    month + mean_pay + search_count,
+                   data = other_crime_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(other_crime_model1)
+lm.beta(other_crime_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+other_crime_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = other_crime_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(other_crime_model2)
+lm.beta(other_crime_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(other_crime_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_other_crime <- pdata.frame(other_crime_data, index = c("ladcd", "month"))
+other_crime_afe_model <- plm(log(avg_crime_rate) ~ retail_and_recreation + transit_stations +
+    month + mean_pay + search_count,
+    data = pdata_other_crime, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(other_crime_afe_model)
+
+fitted_values <- fitted(other_crime_afe_model)
+residuals <- residuals(other_crime_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/OtherCrime/")
+writeLines(capture.output(summary(other_crime_model1)), "other_crime_model1_summary.txt")
+#writeLines(capture.output(summary(other_crime_model2)), "other_crime_model2_summary.txt")
+writeLines(capture.output(summary(other_crime_afe_model)), "other_crime_afe_model_summary.txt")
+pdf("other_crime_model1_diagnostics.pdf")
+plot(other_crime_model1)
+dev.off()
+#pdf("other_crime_model2_diagnostics.pdf")
+#plot(other_crime_model2)
+#dev.off()
+pdf("other_crime_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(other_crime_afe_model), y = residuals(other_crime_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# OTHER THEFT MODEL
+
+# Filter the dataset for "Other theft" crime type
+other_theft_data <- crime_mobility_census %>%
+  filter(crime_type == "Other theft")
+
+# Model 1: Simple linear regression with log transformation
+other_theft_model1 <- lm(log(avg_crime_rate) ~ retail_and_recreation + transit_stations + 
+     month + mean_pay + search_count, 
+                   data = other_theft_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(other_theft_model1)
+lm.beta(other_theft_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+other_theft_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = other_theft_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(other_theft_model2)
+lm.beta(other_theft_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(other_theft_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_other_theft <- pdata.frame(other_theft_data, index = c("ladcd", "month"))
+other_theft_afe_model <- plm(log(avg_crime_rate) ~ retail_and_recreation + transit_stations + 
+     month + mean_pay + search_count,
+                      data = pdata_other_theft, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(other_theft_afe_model)
+
+fitted_values <- fitted(other_theft_afe_model)
+residuals <- residuals(other_theft_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/OtherTheft/")
+writeLines(capture.output(summary(other_theft_model1)), "other_theft_model1_summary.txt")
+#writeLines(capture.output(summary(other_theft_model2)), "other_theft_model2_summary.txt")
+writeLines(capture.output(summary(other_theft_afe_model)), "other_theft_afe_model_summary.txt")
+pdf("other_theft_model1_diagnostics.pdf")
+plot(other_theft_model1)
+dev.off()
+#pdf("other_theft_model2_diagnostics.pdf")
+#plot(other_theft_model2)
+#dev.off()
+pdf("other_theft_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(other_theft_afe_model), y = residuals(other_theft_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+
+# POSESSION OF WEAPONS
+
+# Filter the dataset for "Possession of weapons" crime type
+weapons_data <- crime_mobility_census %>%
+  filter(crime_type == "Possession of weapons")
+
+# Model 1: Simple linear regression with log transformation
+weapons_model1 <- lm(log(avg_crime_rate) ~  transit_stations + residential +
+    month + mean_pay + search_count, 
+                   data = weapons_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(weapons_model1)
+lm.beta(weapons_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+weapons_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = weapons_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(weapons_model2)
+lm.beta(weapons_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(weapons_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_weapons <- pdata.frame(weapons_data, index = c("ladcd", "month"))
+weapons_afe_model <- plm(log(avg_crime_rate) ~ transit_stations + residential +
+    month + mean_pay + search_count,
+                      data = pdata_weapons, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(weapons_afe_model)
+
+fitted_values <- fitted(weapons_afe_model)
+residuals <- residuals(weapons_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/WeaponPosession/")
+writeLines(capture.output(summary(weapons_model1)), "weapons_model1_summary.txt")
+#writeLines(capture.output(summary(weapons_model2)), "weapons_model2_summary.txt")
+writeLines(capture.output(summary(weapons_afe_model)), "weapons_afe_model_summary.txt")
+pdf("weapons_model1_diagnostics.pdf")
+plot(weapons_model1)
+dev.off()
+#pdf("weapons_model2_diagnostics.pdf")
+#plot(weapons_model2)
+#dev.off()
+pdf("weapons_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(weapons_afe_model), y = residuals(weapons_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# PUBLIC ORDER
+
+# Filter the dataset for "Public order" crime type
+public_order_data <- crime_mobility_census %>%
+  filter(crime_type == "Public order")
+
+# Model 1: Simple linear regression with log transformation
+public_order_model1 <- lm(log(avg_crime_rate) ~ parks + transit_stations + retail_and_recreation +
+  month + search_count, 
+                          data = public_order_data)
+
+# Summary and beta coefficients for Model 1
+summary(public_order_model1)
+lm.beta(public_order_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+public_order_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = public_order_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(public_order_model2)
+lm.beta(public_order_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(public_order_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_public_order <- pdata.frame(public_order_data, index = c("ladcd", "month"))
+public_order_afe_model <- plm(log(avg_crime_rate) ~ parks  + transit_stations + retail_and_recreation +
+  month + search_count + mean_pay,
+                      data = pdata_public_order, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(public_order_afe_model)
+
+fitted_values <- fitted(public_order_afe_model)
+residuals <- residuals(public_order_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/PublicOrder/")
+writeLines(capture.output(summary(public_order_model1)), "public_order_model1_summary.txt")
+#writeLines(capture.output(summary(public_order_model2)), "public_order_model2_summary.txt")
+writeLines(capture.output(summary(public_order_afe_model)), "public_order_afe_model_summary.txt")
+pdf("public_order_model1_diagnostics.pdf")
+plot(public_order_model1)
+dev.off()
+#pdf("public_order_model2_diagnostics.pdf")
+#plot(public_order_model2)
+#dev.off()
+pdf("public_order_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(public_order_afe_model), y = residuals(public_order_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+# ROBBERY
+
+# Filter the dataset for "Robbery" crime type
+robbery_data <- crime_mobility_census %>%
+  filter(crime_type == "Robbery")
+
+# Model 1: Simple linear regression with log transformation
+robbery_model1 <- lm(log(avg_crime_rate) ~ residential + retail_and_recreation + 
+                     month + mean_pay + search_count, 
+                     data = robbery_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(robbery_model1)
+lm.beta(robbery_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+robbery_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = robbery_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(robbery_model2)
+lm.beta(robbery_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(robbery_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_robbery <- pdata.frame(robbery_data, index = c("ladcd", "month"))
+robbery_afe_model <- plm(log(avg_crime_rate) ~ residential + retail_and_recreation +
+                     month + mean_pay + search_count,
+                      data = pdata_robbery, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(robbery_afe_model)
+
+fitted_values <- fitted(robbery_afe_model)
+residuals <- residuals(robbery_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Robbery/")
+writeLines(capture.output(summary(public_order_model1)), "robbery_model1_summary.txt")
+#writeLines(capture.output(summary(robbery_model2)), "robbery_model2_summary.txt")
+writeLines(capture.output(summary(robbery_afe_model)), "robbery_afe_model_summary.txt")
+pdf("robbery_model1_diagnostics.pdf")
+plot(robbery_model1)
+dev.off()
+#pdf("robbery_model2_diagnostics.pdf")
+#plot(robbery_model2)
+#dev.off()
+pdf("robbery_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(robbery_afe_model), y = residuals(robbery_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# SHOPLIFTING MODEL
+
+# Filter the dataset for "Shoplifting" crime type
+shoplifting_data <- crime_mobility_census %>%
+  filter(crime_type == "Shoplifting")
+
+# Model 1: Simple linear regression with log transformation
+shoplifting_model1 <- lm(log(avg_crime_rate) ~ retail_and_recreation +
+   month + mean_pay + search_count, 
+                          data = shoplifting_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(shoplifting_model1)
+lm.beta(shoplifting_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+shoplifting_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = shoplifting_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(shoplifting_model2)
+lm.beta(shoplifting_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(shoplifting_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_shoplifting <- pdata.frame(public_order_data, index = c("ladcd", "month"))
+shoplifting_afe_model <- plm(log(avg_crime_rate) ~ retail_and_recreation +
+   month + mean_pay + search_count,
+                      data = pdata_shoplifting, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(shoplifting_afe_model)
+
+fitted_values <- fitted(shoplifting_afe_model)
+residuals <- residuals(shoplifting_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Shoplifting/")
+writeLines(capture.output(summary(public_order_model1)), "shoplifting_model1_summary.txt")
+#writeLines(capture.output(summary(shoplifting_model2)), "shoplifting_model2_summary.txt")
+writeLines(capture.output(summary(shoplifting_afe_model)), "shoplifting_afe_model_summary.txt")
+pdf("shoplifting_model1_diagnostics.pdf")
+plot(shoplifting_model1)
+dev.off()
+#pdf("shoplifting_model2_diagnostics.pdf")
+#plot(shoplifting_model2)
+#dev.off()
+pdf("shoplifting_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(shoplifting_afe_model), y = residuals(shoplifting_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+# THEFT FROM PERSON
+
+# Filter the dataset for "Theft from the person" crime type
+theft_person_data <- crime_mobility_census %>%
+  filter(crime_type == "Theft from the person")
+
+# Model 1: Simple linear regression with log transformation
+theft_person_model1 <- lm(log(avg_crime_rate) ~ retail_and_recreation + parks + transit_stations +
+                          month + mean_pay + search_count, 
+                          data = theft_person_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(theft_person_model1)
+lm.beta(theft_person_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+theft_person_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = theft_person_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(theft_person_model2)
+lm.beta(theft_person_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(theft_person_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_theft_person <- pdata.frame(theft_person_data, index = c("ladcd", "month"))
+theft_person_afe_model <- plm(log(avg_crime_rate) ~ retail_and_recreation + parks + transit_stations +
+                          month + mean_pay + search_count,
+                      data = pdata_theft_person, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(theft_person_afe_model)
+
+fitted_values <- fitted(theft_person_afe_model)
+residuals <- residuals(theft_person_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/TheftPerson/")
+writeLines(capture.output(summary(theft_person_model1)), "theft_person_model1_summary.txt")
+#writeLines(capture.output(summary(theft_person_model2)), "theft_person_model2_summary.txt")
+writeLines(capture.output(summary(theft_person_afe_model)), "theft_person_afe_summary.txt")
+pdf("theft_person_model1_diagnostics.pdf")
+plot(theft_person_model1)
+dev.off()
+#pdf("theft_person_model2_diagnostics.pdf")
+#plot(theft_person_model2)
+#dev.off()
+pdf("theft_person_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(theft_person_afe_model), y = residuals(theft_person_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+# VEHICLE CRIME
+
+# Filter the dataset for "Vehicle crime" crime type
+vehicle_crime_data <- crime_mobility_census %>%
+  filter(crime_type == "Vehicle crime")
+
+# Model 1: Simple linear regression with log transformation
+vehicle_crime_model1 <- lm(log(avg_crime_rate) ~ residential + retail_and_recreation +
+                           month  + mean_pay + search_count, 
+                           data = vehicle_crime_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(vehicle_crime_model1)
+lm.beta(vehicle_crime_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+vehicle_crime_model2 <- lm(log(avg_crime_rate) ~ transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = vehicle_crime_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(vehicle_crime_model2)
+lm.beta(vehicle_crime_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(vehicle_crime_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_vehicle_crime <- pdata.frame(vehicle_crime_data, index = c("ladcd", "month"))
+vehicle_crime_afe_model <- plm(log(avg_crime_rate) ~ residential + retail_and_recreation +
+                           month  + mean_pay + search_count,
+                      data = pdata_vehicle_crime, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(vehicle_crime_afe_model)
+
+fitted_values <- fitted(vehicle_crime_afe_model)
+residuals <- residuals(vehicle_crime_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/VehicleCrime/")
+writeLines(capture.output(summary(vehicle_crime_model1)), "vehicle_crime_model1_summary.txt")
+#writeLines(capture.output(summary(vehicle_crime_model2)), "vehicle_crime_model2_summary.txt")
+writeLines(capture.output(summary(vehicle_crime_afe_model)), "vehicle_crime_afe_model_summary.txt")
+pdf("vehicle_crime_model1_diagnostics.pdf")
+plot(vehicle_crime_model1)
+dev.off()
+#pdf("vehicle_crime_model2_diagnostics.pdf")
+#plot(vehicle_crime_model2)
+#dev.off()
+pdf("vehicle_crime_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(vehicle_crime_afe_model), y = residuals(vehicle_crime_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+# VIOLENCE & SEX OFFENCES
+
+# Filter the dataset for "violence & sexual offences" crime type
+violence_data <- crime_mobility_merged %>%
+  filter(crime_type == "Violence and sexual offences")
+
+# Model 1: Simple linear regression with log transformation
+violence_model1 <- lm(log(avg_crime_rate) ~ workplaces + residential + transit_stations +
+     month  + mean_pay + age_18_24 + unemployment_rate + pubs_clubs + other_food_bev, 
+                          data = violence_data
+)
+
+# Summary and beta coefficients for Model 1
+summary(violence_model1)
+lm.beta(violence_model1)
+
+# Model 2: Linear regression with additional covariates and log transformation
+violence_model2 <- lm(log(avg_crime_rate) ~ parks + transit_stations + 
+    month + `sex_male_sum` + 
+    `economic_activity_status_economically_inactive_sum` + 
+    `population_density_persons_per_square_kilometre_sum` + 
+    `highest_level_of_qualification_no_qualifications_sum`,
+  data = violence_data
+)
+
+# Summary and beta coefficients for Model 2
+summary(violence_model2)
+lm.beta(violence_model2)
+
+# Calculate VIF for Model 2
+vif_values <- vif(violence_model2)
+print(vif_values)
+
+# Fixed Effect Model using plm with log transformation
+pdata_violence <- pdata.frame(violence_data, index = c("ladcd", "month"))
+violence_afe_model <- plm(log(avg_crime_rate) ~ workplaces + residential + transit_stations +
+     month  + mean_pay + age_18_24 + unemployment_rate + pubs_clubs + other_food_bev,
+                      data = pdata_violence, effect = "individual")
+
+# Summary for the Area Fixed Effect Model
+summary(violence_afe_model)
+
+fitted_values <- fitted(violence_afe_model)
+residuals <- residuals(violence_afe_model)
+
+setwd("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime_models/results/Violence&Sex/")
+writeLines(capture.output(summary(violence_model1)), "violence_model1_summary.txt")
+#writeLines(capture.output(summary(violence_model2)), "violence_model2_summary.txt")
+writeLines(capture.output(summary(violence_afe_model)), "violence_afe_model_summary.txt")
+pdf("violence_model1_diagnostics.pdf")
+plot(violence_model1)
+dev.off()
+#pdf("violence_model2_diagnostics.pdf")
+#plot(violence_model2)
+#dev.off()
+pdf("violence_afe_model_diagnostics.pdf")
+ggplot() +
+  geom_point(aes(x = fitted.values(violence_afe_model), y = residuals(violence_afe_model))) +
+  geom_hline(yintercept = 0, color = "red")
+dev.off()
+
+
+```
