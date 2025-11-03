@@ -1,0 +1,2688 @@
+---
+title: "Impact of Mobility on Crime during COVID-19 in England and Wales"
+author: "Hulya Seyidoglu"
+date: "2024-05-14"
+output:
+  word_document:
+    df_print: paged
+  html_document:
+    df_print: paged
+  pdf_document: default
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, message = FALSE, warning = FALSE)
+options(readr.show_col_types = FALSE)
+knitr::opts_chunk$set(root.dir = "/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2", error = TRUE)
+opts_knit$set(eval.after = 'fig.cap')
+set.seed(135)
+```
+
+# Abstract
+
+# Introduction
+
+# Literature Review
+
+# Methodology
+
+In this study, we analyse the impact of mobility on crime during the COVID-19 pandemic in England and Wales. Our primary sources of data are police recorded crime data and Google’s Community Mobility Reports. These datasets provide comprehensive insights into the patterns of crime and human mobility, respectively, over the pandemic period.
+
+## Data
+
+The crime data used in this study were obtained from police records in England and Wales. The dataset comprises 13 categories of crimes and antisocial behaviour: Anti-social behaviour, Bicycle theft, Burglary, Criminal damage and arson, Drugs, Other crime, Other theft, Possession of weapons, Public order, Robbery, Shoplifting, Theft from the person, Vehicle crime, and Violence and sexual offences (INSERT TABLE 1 HERE). Each record includes the date, type of crime, and geographic location identified by Lower Layer Super Output Areas. Although the original data provides x and y coordinates, these are anonymised to safeguard privacy and do not indicate exact locations. For this study, we aggregated the data at the local authority level to align with the granularity of Google’s community mobility data. Local authorities in England and Wales vary in structure and services. In England, there are 317 local authorities, including county councils, district councils, unitary authorities, metropolitan districts, and London boroughs (source: <https://www.gov.uk/guidance/local-government-structure-and-elections>). County councils (21 in two-tier areas) provide services like education, social services, and waste disposal. District councils (164 in two-tier areas) handle local services such as rubbish collection, housing, and planning applications. Unitary authorities (62) deliver all local government services in their areas, mainly in cities, urban areas, and larger towns. Metropolitan districts (36) are responsible for all services in six large urban areas, with some services provided through joint authorities. London boroughs (32) provide nearly all services in their area, with some city-wide services handled by the Greater London Authority. In Wales, there are 22 unitary authorities, known as county and county borough councils, varying in size, with Cardiff being the largest and Merthyr Tydfil the smallest. Excluding Greater Manchester, which consists of ten local authorities that did not consistently share crime data during the period under review, we have a total of 329 local authorities for analysis. The mobility data were obtained from Google’s Community Mobility Reports, which present the percentage variations in visits to various locations compared to a reference period prior to the pandemic. These reports encompass six indicators of mobility: retail and recreation, grocery and pharmacy, parks, transit stations, workplaces, and residential areas. The data illustrate changes in visits to places such as grocery stores, parks, and workplaces during the pandemic (INSERT TABLE 2 HERE). Google computes these variations using aggregated and anonymised data from users who have enabled Location History for their Google Account. The residential mobility variable from Google’s Community Mobility Reports measures the change in average hours spent in residential areas per day, relative to a baseline period. Given that there are only 24 hours in a day, any increase in hours spent in residential areas implies a corresponding decrease in time spent elsewhere, naturally limiting the range of potential changes. On the other hand, Workplace and Retail & Recreation mobility variables show changes in the number of visitors relative to the baseline period. Hence, if fewer people were in retail and recreation areas on a specific day or in workplaces on weekends, there would be little difference during COVID-19 lockdowns. In this study, the mobility data were initially provided on a detailed daily basis and for larger areas. We condensed this data into monthly averages and matched it with local authorities using a lookup table connecting regions to local authority districts. This preprocessing step involved adding a lad19cd column to the mobility data, which assigns a unique identifier to each local authority. To ensure precise geographic boundaries, we utilised a shapefile provided by the Data Science Campus (source: <https://github.com/datasciencecampus/google-mobility-reports-data/tree/master/geography>). To merge the crime and mobility datasets, we performed several preprocessing steps. Initially, we focused on identifying and resolving inconsistencies, such as missing areas and variations in geographic boundaries. For instance, while the mobility data treated Bournemouth, Poole, and Christchurch as a single area, the crime data considered them separate entities. Similarly, we combined various Dorset districts and parts of West Suffolk as needed. This aggregation process involved grouping specific local authority districts and calculating weighted averages of crime rates. Upon merging the datasets, we applied a filter to include data from February 2020 to October 2022, aligning with the availability of Google’s mobility data. The resulting merged dataset, encompassing crime and mobility data at the local authority level, serves as the basis for our subsequent analysis. This thorough data preparation ensures the strength and dependability of our findings, enabling us to effectively examine the correlation between mobility and crime during the pandemic.
+
+## Analysis
+
+Detail the analytical methods and statistical tests used.
+
+```{r load-libraries}
+# Load necessary libraries
+library(readr)
+library(sf)
+library(stringr)
+library(dplyr)
+library(purrr)
+library(tidyr)
+
+# Define a 'not in' operator
+`%nin%` <- Negate(`%in%`)
+
+```
+
+```{r load and pre-process crime data}
+# Load the full crime dataset
+full_dataset <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/full_dataset.csv")
+
+# Convert 'month' to Date format
+full_dataset$month <- as.Date(paste0(full_dataset$month, "-01"))
+
+# Aggregate crime data by crime type, month, year, and LSOA
+sub_data_agg <- full_dataset %>% 
+  drop_na(lsoa_code) %>% 
+  group_by(crime_type, month, year, lsoa_code, lsoa_name) %>% 
+  summarise(crime_count = sum(crime_count), .groups = 'drop')
+
+# Load LSOA population data
+lsoa_pop <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Population_data/lsoa_pop.csv")
+lsoa_pop$Month <- as.Date(lsoa_pop$Month)
+
+# Join crime data with population data
+sub_data_agg_rates <- left_join(sub_data_agg, lsoa_pop, by = c("lsoa_code" = "Code", "month" = "Month"))
+
+# Calculate crime rates per 1,000 people
+sub_data_agg_rates <- sub_data_agg_rates %>%
+  mutate(crime_rate = (crime_count / Monthly_Pop) * 1000)
+```
+
+```{r}
+# Load LSOA to Local Authority lookup data
+lsoa_to_lad <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/PCD_OA_LSOA_MSOA_LAD_MAY19_UK_LU.csv")
+
+lad_shapefile <- st_read("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/Local_Authority_Districts_April_2019_UK_BFC_2022_7650241079832372369/LAD_APR_2019_UK_BFC.shp")
+
+# Filter out ladcd values that start with 'S' and 'N'
+lsoa_to_lad <- lsoa_to_lad %>%
+  filter(!str_starts(ladcd, "S") & !str_starts(ladcd, "N"))
+
+# check lsoa codes matching in full_Dataset and lsoa_to_lad
+# extract unique lsoa_code values from both datasets
+unique_lsoa_code_full_dataset <- unique(sub_data_agg_rates$lsoa_code)
+unique_lsoa_code_lsoa_to_lad <- unique(lsoa_to_lad$lsoa11cd)
+
+# find lsoa_code values that are in full_dataset but not in lsoa_to_lad
+missing_lsoa_code <- setdiff(unique_lsoa_code_full_dataset, unique_lsoa_code_lsoa_to_lad)
+
+# print the missing lsoa_code values
+if (length(missing_lsoa_code) == 0) {
+  print("All lsoa_code values in full_dataset are present in lsoa_to_lad.")
+} else {
+  print("The following lsoa_code values are present in full_dataset but missing in lsoa_to_lad:")
+  print(missing_lsoa_code)
+}
+
+# lets aggregate crime from lsoa to lad level
+# Select unique LSOA to LAD mappings
+lsoa_to_lad_unique <- lsoa_to_lad %>%
+  dplyr::select(lsoa11cd, ladcd, ladnm) %>%
+  distinct()
+
+# Join crime data with local authority data
+sub_data_agg_rates <- sub_data_agg_rates %>%
+  left_join(lsoa_to_lad_unique %>% 
+  dplyr::select(lsoa11cd, ladcd, ladnm), by = c("lsoa_code" = "lsoa11cd"))
+
+# Aggregate crime data to local authority level
+lad_aggregated_crime <- sub_data_agg_rates %>%
+  group_by(ladcd, ladnm, crime_type, month, year) %>%
+  summarise(
+    total_crime_count = sum(crime_count),
+    avg_crime_rate = mean(crime_rate),
+    pop = sum(Monthly_Pop),
+    .groups = 'drop'
+  )
+
+# check number of lad (N=338)
+length(unique(lad_aggregated_crime$ladcd))
+
+# Save the aggregated crime data
+write_csv(lad_aggregated_crime, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/lad_aggregated_crime.csv')
+
+# Load necessary package
+library(dplyr)
+
+```
+
+```{r % of missig crime rate lad vs lsoa by crime type}
+library(dplyr)
+library(lubridate)
+
+# --- Filter sub_data_agg_rates by 2020-02-01 to 2022-10-01 ---
+sub_data_agg_rates_filtered <- sub_data_agg_rates %>%
+  filter(month >= as.Date("2020-02-01") & month <= as.Date("2022-10-01"))
+
+# --- Filter lad_aggregated_crime by 2020-02-01 to 2022-10-01 ---
+lad_aggregated_crime_filtered <- lad_aggregated_crime %>%
+  filter(month >= as.Date("2020-02-01") & month <= as.Date("2022-10-01"))
+
+# Define full grid for LSOAs
+all_months <- seq(as.Date("2020-02-01"), as.Date("2022-10-01"), by = "month")
+all_crime_types <- unique(sub_data_agg_rates$crime_type)
+all_lsoas <- unique(sub_data_agg_rates_filtered$lsoa_name)
+
+full_grid_lsoas <- expand.grid(
+  month = all_months,
+  crime_type = all_crime_types,
+  lsoa_name = all_lsoas
+)
+
+# Define full grid for LADs
+all_lads <- unique(lad_aggregated_crime$ladcd)
+
+full_grid_lads <- expand.grid(
+  month = all_months,
+  crime_type = all_crime_types,
+  ladcd = all_lads
+)
+
+# Merge actual data with full grid to check for missing observations
+lsoa_merged <- full_grid_lsoas %>%
+  left_join(sub_data_agg_rates_filtered, by = c("month", "crime_type", "lsoa_name"))
+
+lad_merged <- full_grid_lads %>%
+  left_join(lad_aggregated_crime_filtered, by = c("month", "crime_type", "ladcd"))
+
+# Count total expected observations
+total_expected_lsoas <- 33*33076
+total_expected_lads <- 33*338
+
+# Count actual observations per crime type
+lsoas_missing <- lsoa_merged %>%
+  group_by(crime_type) %>%
+  summarize(
+    n_lsoas_no_obs = sum(is.na(crime_count)), 
+    pct_lsoas_missing = 100 * n_lsoas_no_obs / total_expected_lsoas
+  )
+
+lads_missing <- lad_merged %>%
+  group_by(crime_type) %>%
+  summarize(
+    n_lads_no_obs = sum(is.na(total_crime_count)),
+    pct_lads_missing = 100 * n_lads_no_obs / total_expected_lads
+  )
+
+# Merge both results
+missing_data_summary <- full_join(lads_missing, lsoas_missing, by = "crime_type")
+
+# Display results
+print(missing_data_summary)
+
+```
+
+```{r}
+google_mob_look_up <- st_read("/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Police.uk/google mob boundaries/google_mobility_lad_boundary_200903.shp")
+
+# all lsoa_codes are in lsoa_to_lad, so the look up file is ok to aggregate lad level. but before aggregate we need to check if google boundaries aling with 2019 lad boundaries from shapefile
+unique_lad_code_google <- unique(google_mob_look_up$lad19cd)
+unique_lad_code_lad_shapefile <- unique(lad_shapefile$LAD19CD)
+
+# Find ladcd values that are in lsoa_to_lad but not in google_mob_look_up
+missing_ladcd <- setdiff(unique_lad_code_google, unique_lad_code_lad_shapefile)
+
+# Print the missing ladcd values
+if (length(missing_ladcd) == 0) {
+  print("All ladcd in google are present in shapefile.")
+} else {
+  print("The following ladcd are present in google but missing in shapefile:")
+  print(missing_ladcd)
+}
+# "E07000190" "E07000191" "E07000205" "E07000206" are missing in shapefile. "E07000190" "E07000191" are replaced with Somerset West and Taunton, and  "E07000205" "E07000206" replaced wth East Suffolk. after we find LAD19CD codes for them in lad_shapefile, we aggreagte those for to relevant codes in googles file. then, all codes in googles data aling with 2019 boundaries.
+
+# Filter for "Somerset West and Taunton" and "East Suffolk"
+filtered_lad_shapefile <- lad_shapefile %>%
+  filter(LAD19NM %in% c("Somerset West and Taunton", "East Suffolk"))
+
+# Print the resulting LAD19CD values
+print(filtered_lad_shapefile %>% select(LAD19NM, LAD19CD))
+
+# East Suffolk E07000244, Somerset West and Taunton E07000246
+google_mob_look_up <- google_mob_look_up %>%
+  mutate(
+    lad19nm = case_when(
+      lad19cd %in% c("E07000190", "E07000191") ~ "Somerset West and Taunton",
+      lad19cd %in% c("E07000205", "E07000206") ~ "East Suffolk",
+      TRUE ~ lad19nm
+    ),
+    lad19cd = case_when(
+      lad19cd %in% c("E07000190", "E07000191") ~ "E07000246",
+      lad19cd %in% c("E07000205", "E07000206") ~ "E07000244",
+      TRUE ~ lad19cd
+    )
+  )
+# Remove duplicates and aggregate data if necessary
+google_mob_look_up <- google_mob_look_up %>%
+  distinct()
+
+# save google mobility look up file
+write.csv(google_mob_look_up, "data/google_mob_look_up.csv", row.names = FALSE)
+
+# check missing areas againg
+unique_lad_code_google <- unique(google_mob_look_up$lad19cd)
+unique_lad_code_lad_shapefile <- unique(lad_shapefile$LAD19CD)
+
+# Find ladcd values that are in lsoa_to_lad but not in google_mob_look_up
+missing_ladcd <- setdiff(unique_lad_code_google, unique_lad_code_lad_shapefile)
+
+# Print the missing ladcd values
+if (length(missing_ladcd) == 0) {
+  print("All ladcd in google are present in shapefile.")
+} else {
+  print("The following ladcd are present in google but missing in shapefile:")
+  print(missing_ladcd)
+}
+
+# filter for England and Wales (codes starting with 'E' or 'W')
+google_mob_look_up <- google_mob_look_up %>%
+  filter(str_starts(lad19cd, "E") | str_starts(lad19cd, "W"))
+
+# Remove Greater Manchester areas
+cities_to_remove <- c("Bolton", "Bury", "Manchester", "Oldham", "Rochdale", "Salford", "Stockport", "Tameside", "Trafford", "Wigan")
+google_mob_look_up <- google_mob_look_up %>%
+  filter(!(lad19nm %in% cities_to_remove))
+
+# now look at discrepencies between google boundaries and crime data
+# Identify missing areas
+missing_in_mobility <- setdiff(lad_aggregated_crime$ladcd, google_mob_look_up$lad19cd)
+missing_in_crime <- setdiff(google_mob_look_up$lad19cd, lad_aggregated_crime$ladcd)
+
+# Print the missing areas
+print(missing_in_mobility)
+print(missing_in_crime)
+
+# Aggregate specific areas
+first_group <- lad_aggregated_crime %>%
+  filter(ladcd %in% c("E06000028", "E06000029", "E07000048")) %>%
+  group_by(month, year, crime_type) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count),
+    avg_crime_rate = sum(avg_crime_rate * pop) / sum(pop), 
+    pop = sum(pop),
+    .groups = 'drop'
+  ) %>%
+  mutate(ladcd = "E06000058", ladnm = "Bournemouth, Christchurch and Poole")
+
+second_group <- lad_aggregated_crime %>%
+  filter(ladcd %in% c("E07000049", "E07000050", "E07000051", "E07000052", "E07000053")) %>%
+    group_by(month, year, crime_type) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count),
+    avg_crime_rate = sum(avg_crime_rate * pop) / sum(pop), 
+    pop = sum(pop),
+    .groups = 'drop'
+  ) %>%
+  mutate(ladcd = "E06000059", ladnm = "Dorset")
+
+third_group <- lad_aggregated_crime %>%
+  filter(ladcd %in% c("E07000201", "E07000204")) %>%
+  group_by(month, year, crime_type) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count),
+    avg_crime_rate = sum(avg_crime_rate * pop) / sum(pop), 
+    pop = sum(pop),
+    .groups = 'drop'
+  ) %>%
+  mutate(ladcd = "E07000245", ladnm = "West Suffolk")
+
+fourth_group <- lad_aggregated_crime %>%
+  filter(ladcd %in% c("E07000190", "E07000191")) %>%
+    group_by(month, year, crime_type) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count),
+    avg_crime_rate = sum(avg_crime_rate * pop) / sum(pop), 
+    pop = sum(pop),
+    .groups = 'drop'
+  ) %>%
+  mutate(ladcd = "E07000246", ladnm = "Somerset West and Taunton")
+
+fifth_group <- lad_aggregated_crime %>%
+  filter(ladcd %in% c("E07000205", "E07000206")) %>%
+  group_by(month, year, crime_type) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count),
+    avg_crime_rate = sum(avg_crime_rate * pop) / sum(pop), 
+    pop = sum(pop),
+    .groups = 'drop'
+  ) %>%
+  mutate(ladcd = "E07000244", ladnm = "East Suffolk")
+
+# Remove old records and add aggregated records
+lad_aggregated_crime <- lad_aggregated_crime %>%
+  filter(!ladcd %in% c("E06000028", "E06000029", "E07000048", # info in Cahpter 2
+                       "E07000049", "E07000050", "E07000051", "E07000052", "E07000053", # info in chapter 2
+                       "E07000201", "E07000204", # info in chapter 2
+                       "E07000190", "E07000191", # mob aggregated in order to align wiht April 2019 boundaries
+                       "E07000205", "E07000206" )) %>% # mob aggregated in order to align wiht April 2019 boundaries
+  bind_rows(first_group, second_group, third_group, fourth_group, fifth_group)
+
+# Identify remaining missing areas after aggregation
+missing_in_mobility <- setdiff(lad_aggregated_crime$ladcd, google_mob_look_up$lad19cd)
+missing_in_crime <- setdiff(google_mob_look_up$lad19cd, lad_aggregated_crime$ladcd)
+
+# Print the missing areas
+print(missing_in_mobility)
+print(missing_in_crime)
+
+# do not have mob information about E06000053 "island of scilliy". we need to remove it. 
+
+# Remove areas without mobility data
+lad_aggregated_crime <- lad_aggregated_crime %>%
+  filter(!ladcd %in% missing_in_mobility)
+
+# check number of lads (N=328)
+length(unique(lad_aggregated_crime$ladcd))
+```
+
+```{r load and process mobility data, missing observations}
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(tibble)
+library(lubridate)
+
+# Load mobility data and lookup table for LAD codes
+Ew_region_mobility <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/Mobility_datasets/Data/Ew_region_mobility.csv")
+
+# Select relevant columns from the lookup table
+lookup_table <- google_mob_look_up %>%
+  dplyr::select(sb_rg_1, sb_rg_2, lad19cd)
+
+lookup_table <- lookup_table %>%
+  rename(sub_region_1 = sb_rg_1, sub_region_2 = sb_rg_2)
+
+# Merge mobility data with LAD lookup table
+Ew_region_mobility_lad <- Ew_region_mobility %>%
+  left_join(lookup_table, by = c("sub_region_1", "sub_region_2")) %>%
+  dplyr::select(-country_region_code, -country_region, -metro_area, -census_fips_code)
+
+# check number of lad19cd
+print(length(unique(Ew_region_mobility_lad$lad19cd)))
+
+
+# Calculate the total number of rows
+total_rows <- nrow(Ew_region_mobility_lad)
+
+# Step 3: Calculate the number of missing values for each column
+missing_data <- Ew_region_mobility_lad %>%
+  summarise(across(c(retail_and_recreation_percent_change_from_baseline, 
+                     grocery_and_pharmacy_percent_change_from_baseline, 
+                     parks_percent_change_from_baseline, 
+                     transit_stations_percent_change_from_baseline, 
+                     workplaces_percent_change_from_baseline, 
+                     residential_percent_change_from_baseline),
+                   ~ sum(is.na(.)), .names = "missing_{col}"))
+
+# Step 4: Calculate the percentage of missing values for each column
+missing_data_percentage <- missing_data %>%
+  mutate(across(everything(), ~ . / total_rows * 100, .names = "percent_{col}"))
+
+# Reshape the data to long format for easier combination
+missing_data_long <- pivot_longer(missing_data, cols = everything(), names_to = "variable", values_to = "missing_count")
+missing_percentage_long <- pivot_longer(missing_data_percentage, cols = everything(), names_to = "variable", values_to = "missing_percentage")
+
+# Select rows from 7 to 12 from the missing_percentage_long data
+missing_percentage_long <- missing_percentage_long[7:12, ]
+
+# Rename variables in missing_percentage_long to match those in missing_data_long
+missing_percentage_long <- missing_percentage_long %>%
+  mutate(variable = gsub("^percent_", "", variable))
+
+# Combine the missing counts and percentages into a single tibble
+combined_data <- left_join(missing_data_long, missing_percentage_long, by = "variable")
+
+# Format the table with proper names
+summary_tibble <- tibble(
+  `Place Category` = gsub("^missing_", "", combined_data$variable),
+  `Number of Observations` = total_rows,
+  `Number of Missing Values` = combined_data$missing_count,
+  `Percentage of Missing Values` = combined_data$missing_percentage
+)
+
+# Display the summary tibble
+print(summary_tibble)
+
+daily_missing_data <- Ew_region_mobility_lad %>%
+  group_by(date) %>%
+  summarise(
+    missing_retail_and_recreation = sum(is.na(retail_and_recreation_percent_change_from_baseline)),
+    missing_grocery_and_pharmacy  = sum(is.na(grocery_and_pharmacy_percent_change_from_baseline)),
+    missing_parks                 = sum(is.na(parks_percent_change_from_baseline)),
+    missing_transit_stations      = sum(is.na(transit_stations_percent_change_from_baseline)),
+    missing_workplaces            = sum(is.na(workplaces_percent_change_from_baseline)),
+    missing_residential           = sum(is.na(residential_percent_change_from_baseline)),
+    .groups = "drop"  # Ungroup after summarising
+  )
+
+
+daily_missing_data_long <- daily_missing_data %>%
+  pivot_longer(
+    cols = starts_with("missing_"),   # i.e., columns like missing_retail_and_recreation, missing_parks, etc.
+    names_to = "mobility_category",   # new column to store which category is missing
+    values_to = "missing_count"       # new column to store the number of missing observations
+  )
+
+# Now, draw a line chart
+ggplot(daily_missing_data_long, aes(x = date, y = missing_count, colour = mobility_category)) +
+  geom_line() +
+  labs(
+    title = "Daily Missing Counts by Mobility Category",
+    x = "Date",
+    y = "Number of Missing Observations",
+    colour = "Mobility Category"
+  ) +
+  theme_minimal()
+
+
+Ew_region_mobility_lad_month <- Ew_region_mobility_lad %>%
+  mutate(month = floor_date(date, "month"))
+
+Ew_region_mobility_lad_long <- Ew_region_mobility_lad_month %>%
+  pivot_longer(
+    cols = ends_with("_percent_change_from_baseline"), 
+    names_to = "mobility_category",      # new column name
+    values_to = "pct_change"             # new column for the values
+  )
+all_na_groups <- Ew_region_mobility_lad_long %>%
+  group_by(lad19cd, month, mobility_category) %>%
+  summarise(all_missing = all(is.na(pct_change)), .groups = "drop") %>%
+  filter(all_missing)
+
+count_missing_months_by_lad_cat <- all_na_groups %>%
+  group_by(lad19cd, mobility_category) %>%
+  summarise(
+    # Count the number of distinct months that are all-missing for this LAD + category
+    missing_months = n_distinct(month),
+    # Optionally, list those months if you want to see them
+    months_list = paste(sort(unique(month)), collapse = ", "),
+    .groups = "drop"
+  )
+
+# Take a look at the results:
+head(count_missing_months_by_lad_cat)
+# This shows you each LAD–month–category combo where *all* daily values are NA.
+
+```
+
+### Fill Missing Mobility Data with MI Imputation
+
+The mobility dataset from Google’s Community Mobility Reports contains some missing values, which must be addressed to ensure the strength and reliability of our results. These reports provide insights into fluctuations in visits to various locations compared to a pre-pandemic baseline. However, due to privacy constraints and concerns about data accuracy, some data are deliberately omitted. Google enforces stringent privacy policies to protect consumers' privacy. Data that do not meet a specific threshold in terms of the number of data elements for a particular location are not reported. This criterion ensures that combined data cannot be used to identify individuals. Consequently, data quality criteria may not be met in certain regions, primarily due to a limited number of users who have enabled Location History, leading to the absence of data for specific geographical areas and time intervals. These concerns regarding privacy and challenges related to data quality indicate limited levels of mobility activity in those regions, suggesting insignificant or negligible changes in mobility. Properly addressing missing data is essential for a comprehensive and precise analysis. A robust approach is necessary to resolve these missing values without compromising the dataset’s accuracy. Multiple Imputation (MI) is selected to replace the missing values in the mobility data. Multiple Imputation is a sophisticated statistical method that generates multiple sets of imputations by predicting missing values based on observed data. This method accounts for the uncertainty and variability in the data by creating several plausible datasets and combining the results for comprehensive analysis (Rubin, 2004). The process starts by filling in missing values multiple times (e.g., 5-10 times) to create several complete datasets. Each imputation is generated using a model that predicts the missing values based on other observed variables in the dataset. Each of the imputed datasets is then analysed separately using standard statistical methods. The results from these analyses are combined to produce estimates and confidence intervals that reflect the uncertainty due to missing data (Schafer, 1997). Multiple Imputation is advantageous over simpler methods like mean imputation because it preserves the natural variability and relationships within the data. By generating multiple estimates for missing values, it reduces the risk of bias and provides a more accurate reflection of the underlying data structure (Van Buuren, 2018). MI is particularly useful in maintaining the integrity of the dataset, as it allows for the inclusion of all available information and improves the robustness of the statistical inferences drawn from the data. This approach ensures that the mobility dataset remains comprehensive and reliable, enhancing the validity of the findings.
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# 1A. Convert `case$date` to a Date
+case_cleaned <- case %>%
+  mutate(date = as.Date(date, format = "%d/%m/%Y"))  # parse day/month/year
+
+# 1B. Join COVID cases into the mobility dataset
+#     We assume `Ew_region_mobility` already has a column `lad19cd` matching `case_cleaned$code`.
+#     If your column is different, adjust the join keys accordingly.
+
+Ew_region_mobility_cases <- Ew_region_mobility_lad %>%
+  left_join(
+    case_cleaned %>% select(code, date, case), 
+    by = c("lad19cd" = "code", "date" = "date")
+  )
+
+# 1. Extract distinct rows for each LAD-month-pop combination
+pop <- lad_aggregated_crime %>% 
+  filter(crime_type == "Drugs")
+monthly_pop <- pop %>%
+  distinct(ladcd, month, pop)
+
+monthly_pop <- monthly_pop %>%
+  mutate(month = as.Date(month))
+
+monthly_pop_filtered <- monthly_pop %>%
+  filter(month >= as.Date("2020-02-01") & month <= as.Date("2022-10-01"))
+
+# Step 1: Extract year-month from the daily dataset
+Ew_region_mobility_cases <- Ew_region_mobility_cases %>%
+  mutate(month = floor_date(date, "month")) 
+
+Ew_region_mobility_cases <- Ew_region_mobility_cases %>%
+  mutate(month = as.Date(month))
+
+Ew_region_mobility_with_pop <- Ew_region_mobility_cases %>%
+  left_join(monthly_pop_filtered, by = c("lad19cd" = "ladcd", "month" = "month"))
+
+Ew_region_mobility_trimmed <- Ew_region_mobility_with_pop %>%
+  select(
+    -sub_region_1, 
+    -sub_region_2, 
+    -iso_3166_2_code, 
+    -place_id
+  )
+
+
+Ew_region_mobility_final <- Ew_region_mobility_trimmed %>%
+  mutate(
+    dow = wday(date),   # Sunday=1, Monday=2, etc. by default
+    moy = month(date)   # January=1, December=12
+  )
+
+```
+
+```{r multiple imputaion with pop,case,day,month}
+library(purrr)  # for map functions
+library(mice)
+
+# Step 1: Split Data by LAD
+split_by_lad <- split(Ew_region_mobility_final, Ew_region_mobility_final$lad19cd)
+
+# Step 2: Define the Imputation Function
+impute_lad_data <- function(df) {
+  
+  # Remove the Date column (MICE cannot handle Date variables)
+  df <- df %>% select(-date)
+  
+  # Define variables for imputation
+  mobility_vars <- c(
+    "retail_and_recreation_percent_change_from_baseline",
+    "grocery_and_pharmacy_percent_change_from_baseline",
+    "parks_percent_change_from_baseline",
+    "transit_stations_percent_change_from_baseline",
+    "workplaces_percent_change_from_baseline",
+    "residential_percent_change_from_baseline"
+  )
+  
+  predictors <- c("pop", "case", "dow", "moy")  # Independent variables
+  
+  # Loop over each mobility variable separately
+  for (mobility_var in mobility_vars) {
+    
+    # Check how much data is missing
+    missing_ratio <- sum(is.na(df[[mobility_var]])) / nrow(df)
+    
+    # Skip imputation if too much is missing (e.g., more than 80% missing)
+    if (missing_ratio > 0.8) {
+      next
+    }
+    
+    # Select relevant variables for imputation
+    data_for_imputation <- df %>%
+      select(all_of(c(mobility_var, predictors)))
+    
+    # Skip imputation if there are no missing values
+    if (sum(is.na(data_for_imputation[[mobility_var]])) == 0) {
+      next
+    }
+    
+    # Apply MICE (5 imputations, predictive mean matching)
+    imp <- mice(
+      data_for_imputation,
+      m = 5,
+      method = 'pmm',
+      maxit = 10,
+      printFlag = FALSE,  # Prevents printing iterations
+      seed = 123  # Set seed for reproducibility
+    )
+    
+    # Get the mean of the 5 imputations
+    completed_sets <- map(1:5, ~ complete(imp, .x))
+    
+    completed_mean <- bind_rows(completed_sets, .id = "imputation_id") %>%
+      mutate(row_id = rep(1:nrow(data_for_imputation), times = 5)) %>%
+      group_by(row_id) %>%
+      summarise(
+        imputed_value = mean(.data[[mobility_var]], na.rm = TRUE),
+        .groups = "drop"
+      )
+    
+    # Merge imputed values back into the original dataframe
+    df <- df %>%
+      mutate(row_id = row_number()) %>%
+      left_join(completed_mean, by = "row_id") %>%
+      mutate(
+        !!mobility_var := coalesce(.data[[mobility_var]], imputed_value)
+      ) %>%
+      select(-row_id, -imputed_value)  # Remove temporary columns
+  }
+  
+  return(df)
+}
+
+# Step 3: Apply the Function to Each LAD
+imputed_list <- map(split_by_lad, impute_lad_data)
+
+# Step 4: Combine the Results
+Ew_region_mobility_imputed <- bind_rows(imputed_list)
+
+# Step 5: Check the Structure
+str(Ew_region_mobility_imputed)
+
+write.csv(Ew_region_mobility_imputed, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/Ew__mobility_mean_imputed')
+
+monthly_mobility <- Ew_region_mobility_imputed %>%
+  group_by(lad19cd, month) %>%
+   summarise(
+    retail_and_recreation = mean(retail_and_recreation_percent_change_from_baseline, na.rm = TRUE),
+    grocery_and_pharmacy = mean(grocery_and_pharmacy_percent_change_from_baseline, na.rm = TRUE),
+    parks = mean(parks_percent_change_from_baseline, na.rm = TRUE),
+    transit_stations = mean(transit_stations_percent_change_from_baseline, na.rm = TRUE),
+    workplaces = mean(workplaces_percent_change_from_baseline, na.rm = TRUE),
+    residential = mean(residential_percent_change_from_baseline, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+
+```
+
+```{r handle with missing observations in mobility}
+library(mice)
+
+# Select relevant columns for imputation
+impute_data <- Ew_region_mobility_lad %>%
+  dplyr::select(retail_and_recreation_percent_change_from_baseline, 
+         grocery_and_pharmacy_percent_change_from_baseline, 
+         parks_percent_change_from_baseline, 
+         transit_stations_percent_change_from_baseline, 
+         workplaces_percent_change_from_baseline, 
+         residential_percent_change_from_baseline)
+
+# Apply multiple imputation
+imputed_data <- mice(impute_data, m = 5, method = 'pmm', maxit = 50)
+
+# Complete the dataset with imputed values
+complete_data <- complete(imputed_data, 1)  # Use the first set of imputed data
+
+# Merge imputed data back to the original dataset
+Ew_region_mobility_lad_imputed <- Ew_region_mobility_lad %>%
+  dplyr::select(-retail_and_recreation_percent_change_from_baseline, 
+         -grocery_and_pharmacy_percent_change_from_baseline, 
+         -parks_percent_change_from_baseline, 
+         -transit_stations_percent_change_from_baseline, 
+         -workplaces_percent_change_from_baseline, 
+         -residential_percent_change_from_baseline) %>%
+  bind_cols(complete_data)
+
+# Save the imputed mobility data
+write.csv(Ew_region_mobility_lad_imputed, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/Ew_region_mobility_lad_imputed.csv')
+
+
+monthly_mobility <- Ew_region_mobility_lad_imputed %>%
+  group_by(lad19cd, month = floor_date(date, "month")) %>%
+   summarise(
+    retail_and_recreation = mean(retail_and_recreation_percent_change_from_baseline, na.rm = TRUE),
+    grocery_and_pharmacy = mean(grocery_and_pharmacy_percent_change_from_baseline, na.rm = TRUE),
+    parks = mean(parks_percent_change_from_baseline, na.rm = TRUE),
+    transit_stations = mean(transit_stations_percent_change_from_baseline, na.rm = TRUE),
+    workplaces = mean(workplaces_percent_change_from_baseline, na.rm = TRUE),
+    residential = mean(residential_percent_change_from_baseline, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Save the monthly mobility data
+write.csv(monthly_mobility, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/monthly_mobility.csv', row.names = FALSE)
+
+```
+
+```{r merge cleaned crime data with mobility data}
+# Filter crime data for the pandemic period
+lad_aggregated_crime_pandemic <- lad_aggregated_crime %>%
+  filter(month >= as.Date("2020-02-01") & month <= as.Date("2022-10-01"))
+
+# Merge crime data with mobility data
+crime_mobility <- lad_aggregated_crime_pandemic %>%
+  left_join(monthly_mobility, by = c("ladcd" = "lad19cd", "month"))
+
+# Check the number of unique LAD codes in the merged dataset
+length(unique(crime_mobility$ladcd))
+
+# nice crime names
+crime_mobility_merged <- crime_mobility %>%  
+  mutate(nice_crime_names = recode(crime_type, "Anti-social behaviour" = 'ASB',
+                                  "Bicycle theft"  = 'Bike Theft',
+                                  "Criminal damage and arson"  = 'Damage & Arson',
+                                  "Other crime" = 'Other Crime',
+                                  "Other theft"= 'Other Theft',
+                                  "Possession of weapons" = 'Weapon Possession',
+                                  "Public order"  = 'Public Order',
+                                  "Theft from the person" = 'Theft Person',
+                                  "Violence and sexual offences"= 'Violence & Sex Offences',
+                                  'Vehicle crime' = 'Vehicle Crime',.default = crime_type ))
+
+# Save the final merged dataset
+write.csv(crime_mobility_merged, "~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/crime_mobility_merged.csv", row.names = FALSE)
+
+```
+
+```{r load libraries and data}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(tidyr)
+
+# Load the merged crime and mobility dataset
+crime_mobility_merged <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/crime_mobility_merged.csv")
+
+
+```
+
+### Descriptives
+
+```{r histograms and scatter plots}
+library(gridExtra)
+library(stargazer)
+library(viridis)
+library(ggplot2)
+library(scales)
+
+# Initialize lists to store plots and summary tables
+histograms <- list()
+
+# Get unique crime types from dataset
+crime_types <- unique(crime_mobility_merged$crime_type)
+
+# Function to generate histograms with fixed axis ticks and increased text size
+generate_histogram <- function(crime_data) {
+  hist_plot <- ggplot(crime_data, aes(x = total_crime_count)) +
+    geom_histogram(binwidth = 10, fill = "blue", color = "black") +
+    ggtitle(crime_data$nice_crime_names[1]) +
+    xlab("Range of crime counts per LAD per month") +
+    ylab("Frequency") +
+    scale_x_continuous(breaks = pretty_breaks(n = 7), expand = c(0, 0)) + 
+    scale_y_continuous(breaks = pretty_breaks(n = 5)) + 
+    theme_minimal() +
+    theme(
+      axis.text = element_text(size = 14), 
+      axis.title = element_text(size = 14),
+      plot.title = element_text(size = 18)
+    )
+  
+  return(hist_plot)
+}
+
+# Generate histograms for each crime type
+for (crime_type in crime_types) {
+  # Filter data for the current crime type
+  crime_data <- crime_mobility_merged %>%
+    filter(crime_type == !!crime_type)
+  
+  # Generate histogram
+  hist_plot <- generate_histogram(crime_data)
+  
+  # Store the histogram
+  histograms[[crime_type]] <- hist_plot
+}
+
+```
+
+```{r histogram panels, echo=FALSE}
+# Split histograms into two groups
+histograms_group1 <- histograms[1:8]
+histograms_group2 <- histograms[9:14]
+
+# Arrange histograms in two panels
+histogram_panel1 <- do.call(grid.arrange, c(histograms_group1, ncol = 2))
+histogram_panel2 <- do.call(grid.arrange, c(histograms_group2, ncol = 2))
+
+histogram_panel <- do.call(grid.arrange, c(histograms, ncol = 2))
+
+# Save the panels
+ggsave("results/improved models/EDA/histogram_panel1.png", histogram_panel1, width = 14, height = 9)
+ggsave("results/improved models/EDA/histogram_panel2.png", histogram_panel2, width = 14, height = 9)
+ggsave("results/improved models/EDA/histogram_panel.png", histogram_panel, width = 9, height = 15)
+
+```
+
+```{r scatter plots, include=FALSE}
+# Define new labels
+new_labels <- c("retail_and_recreation" = "Retail & Recreation",
+                "grocery_and_pharmacy" = "Grocery & Pharmacy",
+                "parks" = "Parks",
+                "transit_stations" = "Transit Stations",
+                "workplaces" = "Workplaces",
+                "residential" = "Residential")
+
+# Define mobility indicators
+mobility_indicators <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+
+scatter_plots <- list()
+scatter_plots_fe <- list()
+
+# Function to select 100 ladcd including outliers
+select_ladcd <- function(data, top_n = 5, total_n = 20) {
+  sorted_data <- data %>% 
+    group_by(ladcd) %>% 
+    summarise(total_crime_count = mean(total_crime_count, na.rm = TRUE)) %>%
+    arrange(desc(total_crime_count))
+  
+  # Select top 30 ladcd to include outliers
+  top_ladcd <- head(sorted_data$ladcd, top_n)
+  
+  # Randomly select the remaining
+  remaining_ladcd <- setdiff(sorted_data$ladcd, top_ladcd)
+  random_ladcd <- sample(remaining_ladcd, total_n - top_n)
+  
+  selected_ladcd <- c(top_ladcd, random_ladcd)
+  
+  return(selected_ladcd)
+}
+
+# Loop through each crime type and mobility indicator to perform analysis
+for (crime_type in crime_types) {
+  
+  # Filter data for the current crime type
+  crime_data <- crime_mobility_merged %>%
+    filter(crime_type == !!crime_type)
+  
+  # Data Cleaning
+  summary_table <- summary(crime_data)
+  write.csv(as.data.frame(summary_table), file = paste0("summary_", gsub(" ", "_", tolower(crime_type)), ".csv"))
+  
+  # Loop through each mobility indicator for scatter plots
+  for (i in seq_along(mobility_indicators)) {
+    mobility_indicator <- mobility_indicators[i]
+    mobility_label <- new_labels[mobility_indicator]
+    
+    # Scatter plot of crime count vs. mobility indicator with regression line
+    scatter_plot <- ggplot(crime_data, aes_string(x = mobility_indicator, y = "total_crime_count")) +
+      geom_point() +
+      geom_smooth(method = "loess", color = "red", se = FALSE) +
+      scale_x_continuous(breaks = pretty_breaks(n = 6), expand = c(0, 0)) + 
+      scale_y_continuous(breaks = pretty_breaks(n = 3)) +
+      xlab(mobility_label) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5))
+    
+    # Add y-axis label only for the first column
+    if (i %% 6 == 1) {
+      scatter_plot <- scatter_plot + ylab("Crime incidents")
+    } else {
+      scatter_plot <- scatter_plot + theme(axis.title.y = element_blank())
+    }
+    
+    # Add a single heading for each row
+    if (i == 1) {
+      scatter_plot <- scatter_plot + ggtitle(crime_data$nice_crime_names[1])
+    }
+    
+    scatter_plots[[paste0(crime_type, "_", mobility_indicator)]] <- scatter_plot
+    
+    # Select 100 ladcd including outliers
+    selected_ladcd <- select_ladcd(crime_data, 20)
+    
+    # Filter data for the selected ladcd
+    filtered_crime_data <- crime_data %>% 
+      filter(ladcd %in% selected_ladcd)
+    
+    # Scatter plot of crime count vs. mobility indicator with fixed effect for selected ladcd
+    scatter_plot_fe <- ggplot(filtered_crime_data, aes_string(x = mobility_indicator, y = "total_crime_count", group = 'ladcd', colour = 'ladcd')) +
+      geom_point(colour = 'black') +
+      geom_smooth(method = "lm", se = FALSE, na.rm = TRUE, size = 0.5) +
+      scale_x_continuous(breaks = pretty_breaks(n = 6), expand = c(0, 0)) + 
+      scale_y_continuous(breaks = pretty_breaks(n = 3)) +
+      xlab(mobility_label) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5),
+            legend.position = "none")
+    
+    # Add y-axis label only for the first column
+    if (i %% 6 == 1) {
+      scatter_plot_fe <- scatter_plot_fe + ylab("Crime incidents")
+    } else {
+      scatter_plot_fe <- scatter_plot_fe + theme(axis.title.y = element_blank())
+    }
+    
+    # Add a single heading for each row
+    if (i == 1) {
+      scatter_plot_fe <- scatter_plot_fe + ggtitle(filtered_crime_data$nice_crime_names[1])
+    }
+    
+    scatter_plots_fe[[paste0(crime_type, "_", mobility_indicator)]] <- scatter_plot_fe
+  }
+}
+
+
+```
+
+(INSERT HISTOGRAM PANELS HERE) The histogram panel illustrates that for all six crime types, the distribution of crime counts is heavily skewed towards the lower end. This suggests that high-frequency incidents are uncommon, and the majority of crimes involve relatively few occurrences. This pattern is consistent across different types of crime, indicating a general trend of low-frequency incidents being more prevalent.
+
+```{r scatter panel, echo=FALSE}
+# Split histograms into two groups
+scatter_group1 <- scatter_plots[1:48]
+scatter_group2 <- scatter_plots[49:84]
+
+# Arrange histograms in two panels
+scatter_panel1 <- do.call(grid.arrange, c(scatter_group1, ncol = 6))
+scatter_panel2 <- do.call(grid.arrange, c(scatter_group2, ncol = 6))
+scatter_panel <- do.call(grid.arrange, c(scatter_plots, ncol = 6))
+
+# Save the panel
+ggsave("results/improved models/EDA/scatter_panel1.png", scatter_panel1, width = 14, height = 9)
+ggsave("results/improved models/EDA/scatter_panel2.png", scatter_panel2, width = 14, height = 9)
+ggsave("results/improved models/EDA/scatter_panel.png", scatter_panel, width = 9, height = 15)
+
+```
+
+```{r scatter panels fixed effect, echo=FALSE}
+options(max.print = 9999)
+# Split histograms into two groups
+scatter_fe_group1 <- scatter_plots_fe[1:48]
+scatter_fe_group2 <- scatter_plots_fe[49:84]
+
+# Arrange histograms in two panels
+scatter_fe_panel1 <- do.call(grid.arrange, c(scatter_fe_group1, ncol = 6))
+scatter_fe_panel2 <- do.call(grid.arrange, c(scatter_fe_group2, ncol = 6))
+scatter_fe_panel <- do.call(grid.arrange, c(scatter_plots_fe, ncol = 6))
+
+
+# Save the panel
+ggsave("results/improved models/EDA/scatter_fe_panel1.png", scatter_fe_panel1, width = 14, height = 9)
+ggsave("results/improved models/EDA/scatter_fe_panel2.png", scatter_fe_panel2, width = 14, height = 9)
+ggsave("results/improved models/EDA/scatter_fe_panel.png", scatter_fe_panel, width = 15, height = 9)
+
+```
+
+(INSERT SCATTER PANELS HERE)
+
+The scatter plot panel visually represents the relationship between total crime counts and mobility indicators for various crime types, highlighting distinct patterns. For Burglary and Vehicle Crime, both show a weak negative relationship with Residential mobility, as indicated by the downward-sloping regression lines. This suggests that higher residential mobility, or more people staying at home, is associated with a slight decrease in these crime types. In contrast, Other Theft and Shoplifting exhibit a positive relationship with Retail & Recreation mobility, where increased mobility in retail areas correlates with higher crime counts, reflecting more opportunities for theft in busier commercial settings. The plot for Theft from the Person also shows a positive relationship with Retail & Recreation mobility, indicating that higher foot traffic in these areas leads to more incidents of personal theft. Lastly, Violence and Sexual Offences display a weak negative relationship with Workplace mobility, suggesting that increased presence in workplaces is associated with fewer incidents of these crimes. Overall, the visual trends reveal that mobility changes have varying impacts on different crime types, with residential mobility generally reducing crime and retail mobility increasing opportunities for theft.
+
+```{r Missing crime data, eval=FALSE, include=FALSE}
+# NATIONAL LEVEL
+
+# Calculate monthly average crime count for each crime type
+monthly_crime_agg <- crime_mobility_merged %>%
+  group_by(month, crime_type) %>%
+  summarise(avg_crime_rate = sum(avg_crime_rate),
+            total_crime_count = sum(total_crime_count))
+
+# Identify all unique combinations of month and crime type
+unique_combinations <- expand.grid(month = unique(crime_mobility_merged$month),
+                                   crime_type = unique(crime_mobility_merged$crime_type))
+
+# I join the data with monthly crime counts to find missing data
+missing_data <- left_join(unique_combinations, monthly_crime_agg, by = c("month", "crime_type"))
+
+# Filter for missing entries and print them
+missing_entries <- missing_data %>%
+  filter(is.na(total_crime_count))
+
+# Print the missing entries
+print(missing_entries)
+
+# LAD LEVEL
+
+# Identify all unique combinations of local authority, month, and crime type
+complete_combinations <- expand.grid(ladnm = unique(crime_mobility_merged$ladnm),
+                                     month = unique(crime_mobility_merged$month),
+                                     crime_type = unique(crime_mobility_merged$crime_type))
+
+# Identify distinct entries in the crime mobility data
+crime_mobility_unique <- crime_mobility_merged %>%
+  distinct(ladnm, month, crime_type, total_crime_count)
+
+# I join the data with complete combinations to find missing combinations
+missing_combinations <- left_join(complete_combinations, crime_mobility_unique, 
+                                  by = c("ladnm", "month", "crime_type")) %>%
+  filter(is.na(total_crime_count))
+
+# Print the missing combinations
+print(missing_combinations)
+
+```
+
+```{r Mobility correlation and line chart, echo=FALSE}
+# Necessary package
+library(corrr)
+library(stringr)
+
+#  select mobility metrics columns
+mobility_metrics <- crime_mobility_merged %>%
+  select(retail_and_recreation, grocery_and_pharmacy, parks, transit_stations, workplaces, residential)
+
+# Calculate correlation matrix and p-values
+correlation_results <- mobility_metrics %>%
+  correlate() %>%
+  fashion()
+
+# save the correlation matrix to a CSV file
+write.csv(correlation_results, file = "results/improved models/EDA/correlation_results_mobility.csv", row.names = TRUE)
+
+# Convert the data frame to a long format
+correlation_results_long <- correlation_results %>%
+  gather(key = "variable2", value = "correlation", -term) %>%
+  rename(variable1 = term)
+
+# Removed the empty correlations (correlation with self)
+correlation_results_long <- correlation_results_long[correlation_results_long$correlation != "", ]
+
+# Convert the correlation to numeric
+correlation_results_long$correlation <- as.numeric(correlation_results_long$correlation)
+
+# Convert noquote to character
+correlation_results_long <- correlation_results_long %>%
+  mutate(variable1 = as.character(variable1),
+         variable2 = as.character(variable2))
+
+# Define new labels
+new_labels <- data.frame(
+  variable = c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential"),
+  label = c("Retail & Recreation", "Grocery & Pharmacy", "Parks", "Transit Stations", "Workplaces", "Residential")
+)
+
+# Wrap labels for better visualization
+new_labels$label_wrapped <- str_wrap(new_labels$label, width = 10)
+
+# Merge new labels with correlation_results_long
+correlation_results_long <- correlation_results_long %>%
+  left_join(new_labels, by = c("variable1" = "variable")) %>%
+  rename(label1 = label_wrapped) %>%
+  left_join(new_labels, by = c("variable2" = "variable")) %>%
+  rename(label2 = label_wrapped)
+
+
+correlation_results_long <- correlation_results_long %>% select(-c(label.x, label.y))
+
+# Define the original order and corresponding wrapped labels
+mobility_order <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+
+# Define wrapped labels (must exactly match label1 and label2 values)
+label_lookup <- c(
+  "residential" = "Residential",
+  "workplaces" = "Workplaces",
+  "transit_stations" = "Transit\nStations",
+  "parks" = "Parks",
+  "grocery_and_pharmacy" = "Grocery &\nPharmacy",
+  "retail_and_recreation" = "Retail &\nRecreation"
+)
+
+# Set levels in correct order
+label_levels <- label_lookup[mobility_order]
+
+# Convert label1 and label2 to ordered factors
+correlation_results_long <- correlation_results_long %>%
+  mutate(
+    label1 = factor(label1, levels = label_levels),
+    label2 = factor(label2, levels = label_levels)
+  )
+
+# Draw a heatmap
+mobility_heatmap <- ggplot(data = correlation_results_long, aes(x = label1, y = label2, fill = correlation)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", correlation)), color = "black", size = 4) +
+  
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, 
+                       limit = c(-1, 1), space = "Lab", name = "Correlation") +
+  
+  labs(title = "", x = "", y = "") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    plot.margin = margin(0.2, 0, 0, 0.2, "cm"),
+    panel.grid.minor = element_blank(),
+    legend.position = ""
+  )
+
+mobility_heatmap
+
+
+# Save
+ggsave("results/improved models/EDA/mobility_heatmap.png", width = 8, height = 5.3)
+
+# Aggregating the data to the national level
+national_mobility <- crime_mobility_merged %>%
+  group_by(month) %>%
+  summarise(
+    avg_retail_and_recreation = mean(retail_and_recreation, na.rm = TRUE),
+    avg_grocery_and_pharmacy = mean(grocery_and_pharmacy, na.rm = TRUE),
+    avg_parks = mean(parks, na.rm = TRUE),
+    avg_transit_stations = mean(transit_stations, na.rm = TRUE),
+    avg_workplaces = mean(workplaces, na.rm = TRUE),
+    avg_residential = mean(residential, na.rm = TRUE)
+  )
+
+# Convert the data to long format for plotting
+national_mobility_long <- national_mobility %>%
+  pivot_longer(
+    cols = starts_with("avg_"),
+    names_to = "Mobility_Category",
+    values_to = "Percentage_Change"
+  )
+
+# Adjust the category names for readability
+national_mobility_long$Mobility_Category <- factor(
+  national_mobility_long$Mobility_Category,
+  levels = c(
+    "avg_retail_and_recreation", "avg_grocery_and_pharmacy", "avg_parks",
+    "avg_transit_stations", "avg_workplaces", "avg_residential"
+  ),
+  labels = c(
+    "Retail & Recreation", "Grocery & Pharmacy", "Parks",
+    "Transit Stations", "Workplaces", "Residential"
+  )
+)
+
+# Create a sequence of dates that correspond to the custom labels
+breaks_dates <- seq.Date(from = as.Date("2020-02-01"), to = as.Date("2022-10-01"), by = "4 months")
+
+
+# Define lockdown periods for shading
+lockdown_periods <- data.frame(
+  start = as.Date(c("2020-03-26", "2020-11-05", "2021-01-06")),
+  end = as.Date(c("2020-06-01", "2020-12-02", "2021-03-08"))
+)
+
+# Create the line chart with enhancements and shaded lockdown periods
+ggplot(national_mobility_long, aes(x = month, y = Percentage_Change, color = Mobility_Category)) +
+  
+  # Add shaded lockdown periods
+  geom_rect(data = lockdown_periods, aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+            fill = "grey70", alpha = 0.3, inherit.aes = FALSE) +
+  
+  # Smooth line for trends
+  geom_smooth(se = FALSE, span = 0.1) +
+  
+  # Horizontal line at y = 0
+  geom_hline(yintercept = 0, size = 1.2) +
+  
+  # Color scale
+  scale_color_viridis(discrete = TRUE, option = "D") +
+  
+  # Date and y-axis formatting
+  scale_x_date(date_labels = "%b %y", breaks = breaks_dates, minor_breaks = NULL) +
+  scale_y_continuous(breaks = seq(-100, 100, by = 20)) +
+  
+  # Labels
+  labs(
+    title = "",
+    x = "",
+    y = "% Change",
+    color = ""
+  ) +
+  
+  # Minimal theme
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 16, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 16),
+    plot.title = element_text(size = 18),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    legend.position = c(0.47, -0.3),  # Adjust legend position
+    legend.text = element_text(size = 16),
+    plot.margin = margin(t = 20, r = 10, b = 20, l = 10)  # Increase bottom margin
+  ) +
+  
+  # Legend formatting
+  guides(color = guide_legend(nrow = 2, byrow = TRUE))
+
+# Print the plot
+ggsave("results/improved models/EDA/mobility_trends.png", width = 10, height = 5)
+
+# Define the observation periods for years
+year1 <- national_mobility_long %>%
+  filter(month >= as.Date("2020-03-01") & month <= as.Date("2021-02-01"))
+
+year2 <- national_mobility_long %>%
+  filter(month >= as.Date("2021-03-01") & month <= as.Date("2022-02-01"))
+
+year3 <- national_mobility_long %>%
+  filter(month >= as.Date("2022-03-01") & month <= as.Date("2022-10-01"))
+
+# Calculate the average percentage change for each year
+year1_summary <- year1 %>%
+  group_by(Mobility_Category) %>%
+  summarise(Average_Percentage_Change_Year1 = mean(Percentage_Change, na.rm = TRUE))
+
+year2_summary <- year2 %>%
+  group_by(Mobility_Category) %>%
+  summarise(Average_Percentage_Change_Year2 = mean(Percentage_Change, na.rm = TRUE))
+
+year3_summary <- year3 %>%
+  group_by(Mobility_Category) %>%
+  summarise(Average_Percentage_Change_Year3 = mean(Percentage_Change, na.rm = TRUE))
+
+# Combine summaries
+summary_table <- left_join(year1_summary, year2_summary, by = "Mobility_Category")
+summary_table <- left_join(summary_table, year3_summary, by = "Mobility_Category")
+
+# Print the summary table
+print(summary_table)
+
+```
+
+The heatmap shows the correlations among several mobility indices as recorded in Google’s Community Mobility Reports. The categories encompass Retail & Recreation, Grocery & Pharmacy, Parks, Transit Stations, Workplaces, and Residential sites. The heatmap exhibits a correlation matrix that unveils the magnitude and direction of the connections between every pair of mobility indicators. From blue to red, the hues exhibit negative to positive connections. White, on the other hand, exhibits correlations near to zero. It is clear that there are considerable positive associations between visits to Retail & Recreation locations and other destinations, including Grocery & Pharmacy stores, Transit Stations, and Workplaces. A rise in the number of people visiting retail shops and recreational areas is usually followed by an equal rise in the number of people visiting grocery and pharmacy stores, transportation hubs and workplaces. The correlation value of 0.8 indicates a strong positive association between Retail & Recreation and Grocery & Pharmacy. Correlation between Retail & Recreation and Transit stations (0.69) indicates a positive association, whereas a coefficient of 0.76 indicates a strong relationship with Workplaces. However, there is a considerable negative relationship between the frequency of visiting other locations and the time spent at residential areas. For example, there is a very strong negative relationship with Retail & Recreation (-0.85) and Workplaces (-0.88); strong negative relationship with Grocery & Pharmacy (-0.68) and Transit Stations (-0.64). These results suggest that individuals visit other locations less frequently when they spend more time at home. Interestingly, the degree of mobility towards Parks exhibits weaker correlations with other mobility measures. There is a moderately good relationship between the groups of Transit Stations, Grocery & Pharmacy, and Retail & Recreation. The value of the association coefficient between a grocery and a pharmacy is 0.49, between a store and a recreation area is 0.45, and between transit stations is 0.39. The coefficient of 0.17 shows that the association between the specified variable and workplaces is not strong. On the other hand, the Residential variable and the provided variable are not associated at all, as seen by the correlation of -0.22. This implies that the factors that influence individuals’ decisions to visit parks may be distinct from those that influence their decisions to visit retail areas or workplaces. It is possible that this is due to seasonal or leisure factors that are not closely associated with other forms of mobility. In general, the heatmap shows a substantial association between patterns of movement to retail, supermarket, transit, and workplace locations. In contrast, these patterns are typically adversely connected with home mobility. Visits to parks follow a predictable pattern, with weaker connections indicating the presence of additional underlying variables. Developing a thorough grasp of these relationships provides useful insights into the relationship between changes in one type of mobility behaviour and changes in others. This is especially essential in light of the COVID-19 epidemic, which has significantly disrupted travel patterns.
+
+```{r Crime-mobility correlations - national level, include=FALSE}
+# Aggregate crime data to national level by crime type and month
+# Load packages
+library(corrr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Aggregate crime data to national level by crime type and month
+national_crime_data <- crime_mobility_merged %>%
+  group_by(crime_type, nice_crime_names, month) %>%
+  summarise(
+    total_crime_count = sum(total_crime_count, na.rm = TRUE),
+    avg_crime_rate = mean(avg_crime_rate, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Aggregate mobility data to national level by month
+national_mobility_data <- crime_mobility_merged %>%
+  group_by(month) %>%
+  summarise(
+    retail_and_recreation = mean(retail_and_recreation, na.rm = TRUE),
+    grocery_and_pharmacy = mean(grocery_and_pharmacy, na.rm = TRUE),
+    parks = mean(parks, na.rm = TRUE),
+    transit_stations = mean(transit_stations, na.rm = TRUE),
+    workplaces = mean(workplaces, na.rm = TRUE),
+    residential = mean(residential, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+# Join the national crime data with the national mobility data
+national_crime_mobility <- left_join(national_crime_data, national_mobility_data, by = "month")
+
+# Split data by crime type
+list_of_crime_data <- split(national_crime_mobility, national_crime_mobility$crime_type)
+
+# Function to calculate Spearman correlation for each crime type
+calculate_correlations <- function(crime_data, crime_type, nice_crime_name) {
+  correlations <- data.frame(
+    Crime_Type = character(),
+    Mobility_Index = character(),
+    Correlation = numeric(),
+    P_Value = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  mobility_indices <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+  
+  for (mobility_index in mobility_indices) {
+    test_result <- cor.test(crime_data[[mobility_index]], crime_data$avg_crime_rate, method = "spearman")
+    correlations <- rbind(correlations, data.frame(
+      Crime_Type = nice_crime_name,
+      Mobility_Index = mobility_index,
+      Correlation = test_result$estimate,
+      P_Value = test_result$p.value
+    ))
+  }
+  
+  return(correlations)
+}
+
+# Apply the function to each crime data subset
+correlation_results <- lapply(names(list_of_crime_data), function(crime_type) {
+  nice_crime_name <- unique(national_crime_data$nice_crime_names[national_crime_data$crime_type == crime_type])
+  calculate_correlations(list_of_crime_data[[crime_type]], crime_type, nice_crime_name)
+})
+
+# Combine all results into one data frame
+correlation_na_df <- do.call(rbind, correlation_results)
+
+# Add significance level
+correlation_na_df$Significance <- ifelse(correlation_na_df$P_Value < 0.001, "***",
+                                         ifelse(correlation_na_df$P_Value < 0.01, "**",
+                                                ifelse(correlation_na_df$P_Value < 0.05, "*", "")))
+
+correlation_na_df <- correlation_na_df %>%
+  mutate(
+    Correlation = round(as.numeric(Correlation), 3),
+    P_Value = round(as.numeric(P_Value), 3)
+  )
+
+correlation_na_df$Crime_Type <- factor(correlation_na_df$Crime_Type, levels = rev(sort(unique(correlation_na_df$Crime_Type))))
+
+# Concatenate the correlation coefficients and significance symbols
+correlation_na_df$label <- paste0(round(correlation_na_df$Correlation, 2))
+
+# Define new labels
+new_labels <- c(
+  "retail_and_recreation" = "Retail & Recreation",
+  "grocery_and_pharmacy" = "Grocery & Pharmacy",
+  "parks" = "Parks",
+  "transit_stations" = "Transit Stations",
+  "workplaces" = "Workplaces",
+  "residential" = "Residential"
+)
+
+# Ensure correlation values are formatted to two decimal places
+correlation_na_df <- correlation_na_df %>%
+  mutate(label = paste0(sprintf("%.2f", Correlation), Significance)) 
+
+# Wrap labels for better visualization
+new_labels_wrapped <- str_wrap(unname(new_labels), width = 10)
+
+# Define crime type labels and sort them alphabetically
+crime_labels <- sort(unique(correlation_na_df$Crime_Type))
+wrapped_crime_labels <- str_wrap(crime_labels, width = 10)
+
+# Ensure the labels and their lengths match correctly
+mobility_labels <- names(new_labels)
+
+# Add new labels to correlation_na_df
+correlation_na_df <- correlation_na_df %>%
+  mutate(Mobility_Label = factor(Mobility_Index, levels = mobility_labels, labels = new_labels_wrapped),
+         Crime_Label = factor(Crime_Type, levels = crime_labels, labels = wrapped_crime_labels))
+
+# Define crime type labels and sort them alphabetically
+crime_labels <- sort(unique(correlation_na_df$Crime_Type))
+wrapped_crime_labels <- str_wrap(crime_labels, width = 10)
+
+# Define your desired crime order
+desired_crime_order <- c(
+  "Bike Theft", "Burglary", "Damage & Arson", "Vehicle Crime",
+  "Other Theft", "Robbery", "Shoplifting", "Theft Person",
+  "Public Order", "Violence & Sex Offences", "Weapon Possession",
+  "ASB", "Drugs", "Other Crime"
+)
+
+# Wrap labels
+wrapped_desired_order <- str_wrap(desired_crime_order, width = 10)
+
+correlation_na_df <- correlation_na_df %>%
+  mutate(
+    Mobility_Label = factor(Mobility_Index, levels = mobility_labels, labels = new_labels_wrapped),
+    Crime_Label = factor(Crime_Type, levels = rev(desired_crime_order), labels = rev(wrapped_desired_order))
+  )
+
+
+# Create the heatmap with updated labels
+national_mobility_cor <- ggplot(correlation_na_df, aes(x = Mobility_Label, y = Crime_Label, fill = Correlation)) +
+  geom_tile() + 
+  geom_text(aes(label = label), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name = "Correlation") +
+  theme_minimal() +  
+  scale_x_discrete(labels = new_labels_wrapped) +  # Keep this for mobility labels
+  theme(axis.text.x = element_text(size = 14, hjust = 0.5),
+        axis.text.y = element_text(size = 14),
+        plot.title = element_text(size = 18),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        legend.position = "",
+        plot.margin = margin(0, 0, -0.2, -0.5, "cm"),
+        panel.grid.minor = element_blank()) +
+  labs(x = "", y = "", title = "")
+
+print(national_mobility_cor)
+
+# Save
+ggsave(national_mobility_cor, file = "results/improved models/EDA/crime_mobility_national.png", width = 7.5, height = 11.75)  
+
+# Convert data to wide format
+wide_df <- correlation_na_df %>%
+  dplyr::select(Crime_Type, Mobility_Index, Correlation) %>% 
+  pivot_wider(
+    names_from = Mobility_Index, 
+    values_from = c(Correlation),  
+    names_sep = "_"
+  )
+
+write.csv(wide_df, file = "results/improved models/EDA/national_correlation_matrix.csv", row.names = TRUE)
+
+```
+
+(MOBILITY HEATMAP) The heatmap visualizes the correlations between various crime types and mobility indicators as reported by Google’s Community Mobility Reports. This analysis includes crime types such as Anti-social behaviour, Bicycle theft, Burglary, Criminal damage and arson, Drugs, Other crime, Other theft, Possession of weapons, Public order, Robbery, Shoplifting, Theft from the person, Vehicle crime, and Violence and sexual offences. The mobility indicators analysed include Retail & Recreation, Grocery & Pharmacy, Parks, Transit Stations, Workplaces, and Residential areas. The heatmap shows the strength and direction of relationships between each pair of crime types and mobility indicators, with blue indicating negative correlations, red indicating positive correlations, and white representing near-zero correlations.
+
+One notable finding is the strong negative correlation between Anti-social behaviour (ASB) and Residential mobility (-0.72). This suggests that higher residential mobility, indicating more people staying at home, is associated with lower instances of ASB. This result can be understood in the context of COVID-19 restrictions, where stay-at-home orders likely reduced opportunities for ASB in public spaces. Additionally, proactive policing strategies during the pandemic may have contributed to this trend, as police presence in residential areas increased to enforce lockdown measures. Similarly, there is a significant negative correlation between Drug-related crimes and Residential mobility (-0.57). The decrease in drug-related activities as residential mobility increases can also be attributed to the pandemic restrictions. The reduced public and social activities likely hindered drug trade and consumption in public areas, while proactive policing focused on maintaining public health measures further discouraged such activities.
+
+The choice of specific crime-mobility pairs is grounded in Routine Activities Theory, which posits that the occurrence of crime is influenced by the convergence of motivated offenders, suitable targets, and the absence of capable guardians. This theoretical framework helps explain why certain crimes are correlated with specific types of mobility. For example, residential mobility impacts burglary rates as changes in residential presence alter the availability of targets and the level of guardianship in homes. Similarly, vehicle crimes are influenced by the presence or absence of potential targets in residential areas. Retail & Recreation mobility indicates public presence in commercial areas, affecting the availability of targets for theft, which is why crimes like other theft, shoplifting, and theft from the person show strong correlations with this mobility indicator. Workplace mobility can influence instances of violence and sexual offences, as interactions in workplace settings provide opportunities for such crimes.
+
+The heatmap displays the relationships between various types of crimes and mobility metrics, as provided in Google’s Community mobility Reports. The heatmap displays the relationships between various types of crimes and mobility metrics, as provided in Google’s Community Mobility Reports. An important finding is the significant negative relationship between ASB and Residential mobility (-0.72). This indicates a correlation between increased residential mobility (individuals spending more time at home) and a decrease in instances of antisocial behaviour. Furthermore, drug offences and Residential mobility have a moderate negative correlation (-0.57) of. This outcome is consistent with the COVID-19 restrictions, as the stay-at-home orders most likely decreased the chances of antisocial behaviour occurring in public areas. There was an elevated police presence in residential areas to ensure compliance with lockdown measures (Halford et al., 2022). For drug offences, proactive law enforcement efforts aimed at enforcing public health measures further discouraged such activities. (Neanidis & Rana, 2022).
+
+The choice of particular crime-mobility pairings is based on Routine Activities Theory, which suggests that the probability of a crime occurring is affected by a combination of motivated criminals, vulnerable targets, and the lack of sufficient guardianship. This theory clarifies the reason behind the association between certain crimes and individuals’ mobility. Residential mobility affects burglary rates by changing the presence of residents, which in turn affects the availability of targets and the amount of guardianship in residences. Vehicle crimes in residential settings are affected by the availability or lack of potential targets. The mobility indicator of Retail & Recreation reflects the level of public presence in commercial locations, which in turn affects the availability of targets for theft.This defines the strong correlation between this mobility indicator and crimes such as other theft, shoplifting, and theft from the person. The occurrence of violence and sexual offences can be influenced by workplace mobility, as the interactions that occur in office environments create an opportunity for these types of crimes.
+
+The heatmap provides empirical evidence supporting these theoretical justifications. There is a weak positive correlation between the presence of transit stations (0.27) and moderate correlation with workplaces (0.42). The inverse relationship between residential mobility (-0.72) and vehicle crime is significant, while the direct relationships with workplaces (0.77) and transit stations (0.64) are moderate. This suggests that vehicle crimes are more probable when individuals are not present at their residences, consistent with Routine Activities Theory. Theft exhibits significant positive associations with Retail & Recreation (0.89) and Transit Stations (0.88), indicating a heightened vulnerability to theft in regions with considerable public mobility. Shoplifting exhibits significant positive associations with Retail & Recreation (0.82) and Workplaces (0.86), providing additional evidence for the connection between retail foot traffic and occurrences of shoplifting. Similarly, there is a considerable correlation between Theft from the Person and Retail & Recreation (0.89) as well as Transit Stations (0.76), highlighting the vulnerability of individuals in crowded public areas. There is a significant inverse relationship between Violence and Sexual Offences and Residential mobility, with a correlation coefficient of -0.74. On the other hand, there are positive correlations between these offences and workplaces (0.63) and transit stations (0.74), indicating that they are more common in public and workplace settings.
+
+The correlation between anti-social behaviour (ASB) and various mobility indicators is a noteworthy finding. ASB exhibits a weak negative correlation with Transit Stations (-0.37) and Residential Mobility (-0.26) at the local authority level. This aligns with the national-level analysis, which also found a significant negative correlation between ASB and Residential Mobility.
+
+Similar to the national-level analysis, there is a negative correlation between drug offences and Residential mobility (-0.17). However, the association with other measures of mobility, such as Transit Stations and Retail & Recreation, reveals more complex and localised differences. The local-level data reveals a weak or near-zero correlation with the majority of mobility indicators when examining Burglary, in contrast to the national-level analysis, which showed moderate positive correlations with Transit Stations and Workplaces. This suggests that the impact of mobility on burglary rates might vary significantly among different local authorities, influenced by varying local conditions.
+
+Nevertheless, there are also inconsistencies in the associations for offences related to theft. For example, the national level analysis indicates a robust positive correlation between Retail & Recreation and Other theft (0.93), whereas the local-level analysis indicates a weakened positive correlation (0.02). This discrepancy underscores the variability in the impact of mobility patterns on larceny in various local contexts. Similarly, Theft from the Person correlates with Retail & Recreation and Workplaces at both levels. However, the strength of these correlations is less pronounced at the local level, suggesting that theft dynamics vary on a local scale.
+
+At the local level, the relationship between mobility indicators and Violence and Sexual Offences is more complex. Similar to the national-level findings, the local-level data indicates a negative correlation between Residential mobility and transit stations. However, there are also positive correlations with Grocery & Pharmacy and Workplaces, implying that these crimes may be influenced by specific local conditions and interactions in these contexts. In general, the heatmap at the local authority level demonstrates both similarities and distinctions compared to the national-level analysis. While certain general patterns, such as the negative correlation between ASB and Residential mobility, are consistent across both levels, other relationships exhibit substantial local variations. These discrepancies emphasise the need to consider local context when examining the influence of mobility on crime and highlight the local dynamics that influence crime patterns in various environments. Understanding these local variations is essential for effectively addressing crime in local settings.
+
+```{r crime mobility correlations - lad level, echo=FALSE, warning=FALSE}
+# Load packages
+library(corrr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+list_of_crime_data <- split(crime_mobility_merged, crime_mobility_merged$crime_type)
+
+# Use unction to calculate Spearman from previous chunk
+correlation_results <- lapply(names(list_of_crime_data), function(crime_type) {
+  nice_crime_name <- unique(crime_mobility_merged$nice_crime_names[crime_mobility_merged$crime_type == crime_type])
+  calculate_correlations(list_of_crime_data[[crime_type]], crime_type, nice_crime_name)
+})
+
+# Combine all results into one data frame
+correlation_df <- do.call(rbind, correlation_results)
+
+# Add significance level
+correlation_df$Significance <- ifelse(correlation_df$P_Value < 0.001, "***",
+                                  ifelse(correlation_df$P_Value < 0.01, "**",
+                                         ifelse(correlation_df$P_Value < 0.05, "*", "")))
+correlation_df <- correlation_df %>%
+  mutate(
+    Correlation = round(as.numeric(Correlation), 3),
+    P_Value = round(as.numeric(P_Value), 3)
+  )
+
+correlation_df$Crime_Type <- factor(correlation_df$Crime_Type, levels = rev(sort(unique(correlation_df$Crime_Type))))
+
+# Concatenate the correlation coefficients and significance symbols
+correlation_df$label <- paste0(round(correlation_df$Correlation, 2))
+
+correlation_df <- correlation_df %>%
+  mutate(label = paste0(sprintf("%.2f", Correlation), Significance)) 
+
+# Define crime type labels and sort them alphabetically
+crime_labels <- sort(unique(correlation_df$Crime_Type))
+wrapped_crime_labels <- str_wrap(crime_labels, width = 10)
+
+# Define your desired crime order
+desired_crime_order <- c(
+  "Bike Theft", "Burglary", "Damage & Arson", "Vehicle Crime",
+  "Other Theft", "Robbery", "Shoplifting", "Theft Person",
+  "Public Order", "Violence & Sex Offences", "Weapon Possession",
+  "ASB", "Drugs", "Other Crime"
+)
+
+# Wrap labels for visualization
+wrapped_desired_order <- str_wrap(desired_crime_order, width = 10)
+
+# Ensure the labels and their lengths match correctly
+mobility_labels <- names(new_labels)
+new_labels_wrapped <- str_wrap(unname(new_labels), width = 10)
+
+# Apply factor ordering
+correlation_df <- correlation_df %>%
+  mutate(
+    Mobility_Label = factor(Mobility_Index, levels = mobility_labels, labels = new_labels_wrapped),
+    Crime_Label = factor(Crime_Type, levels = rev(desired_crime_order), labels = rev(wrapped_desired_order))
+  )
+
+# Create the heatmap
+lad_mobility_cor <- ggplot(correlation_df, aes(x = Mobility_Label, y = Crime_Label, fill = Correlation)) +
+  geom_tile() + 
+  geom_text(aes(label = label), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name = "Correlation") +
+  theme_minimal() +  
+  scale_x_discrete(labels = new_labels_wrapped) +  
+  theme(axis.text.x = element_text(size = 14, hjust = 0.5),
+        axis.text.y = element_text(size = 14),
+        plot.title = element_text(size = 18),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        plot.margin = margin(0, 0, -0.2, -0.5, "cm"),
+        legend.position = "",
+        panel.grid.minor = element_blank()) +     
+  labs(x = "", y = "", title = "")
+
+
+# Save
+ggsave(lad_mobility_cor, file = "results/improved models/EDA/crime_mobility_lad.png", width = 7.5, height = 11.75)
+
+# Mutate the dateset in wide format and save
+wide_df <- correlation_df %>%
+  dplyr::select(Crime_Type, Mobility_Index, Correlation) %>% 
+  pivot_wider(
+    names_from = Mobility_Index,
+    values_from = c(Correlation),  
+    names_sep = "_"   
+  )
+
+
+write.csv(wide_df, file = "results/improved models/EDA/lad_correlation_matrix.csv", row.names = TRUE)
+
+```
+
+(NATIONAL CORRELATION HEATMAP) The heatmap provides a more detailed perspective than the national-level analysis by visualising the correlations between various crime categories and mobility indicators across different local authorities.
+
+The correlation between anti-social behaviour (ASB) and a variety of mobility indicators is a noteworthy finding. ASB exhibits a weak negative correlation with Transit Stations (-0.37) and Residential Mobility (-0.26) at the local authority level. This is in line with the national-level analysis, which also found a significant negative correlation between ASB and Residential Mobility.
+
+Likely to the national-level analysis, there is a negative correlation between drug offences and Residential mobility (-0.17). However, the association with other measures of mobility, such as Transit Stations and Retail & Recreation, reveals more complex and localised differences.
+
+The local-level data reveals a weak or near-zero correlation with the majority of mobility indicators when examining Burglary, in contrast to the national-level analysis, which showed moderate positive correlations with Transit Stations and Workplaces. This suggests that the impact of mobility on burglary rates might vary significantly among different local authorities, as it is influenced by different local conditions.
+
+Nevertheless, there are also inconsistencies in the associations for offences related to theft. For example, the national level analysis indicates a robust positive correlation between Retail & Recreation and Other theft (0.93), whereas the local-level analysis indicates a weakened positive correlation (0.02). The variability in the impact of mobility patterns on larceny in various local contexts is underscored by this discrepancy. Similarly, larceny is correlated with Retail & Recreation and Workplaces at both levels. However, the strength of these correlations is less pronounced at the local level, suggesting that larceny dynamics vary on a local level.
+
+At the local level, the relationship between mobility indicators and violence and sexual offences is more complex. Similar to the national-level findings, the local-level data indicates a negative correlation between residential mobility and transit stations. However, there are also positive correlations between Grocery & Pharmacy and Workplaces, which implies that these crimes may be influenced by specific local conditions and interactions in these contexts.
+
+In general, the heatmap at the local authority level demonstrates both similarities and distinctions in comparison to the national-level analysis. Although certain general patterns, such as the negative correlation between ASB and Residential mobility, are consistent across both levels, other relationships exhibit substantial local variations. These discrepancies emphasise need of taking local context into account when examining the influence of mobility on crime. They also highlight the local dynamics that influence crime patterns in various environments. To effectively address crime in local environments, it is essential to comprehend these local variations.
+
+### Concept of Area Fixed Effect Model
+
+The fixed effect model is designed to control for variables that do not change over time. It is a statistical technique used to analyse hierarchical data, which consists of observations from larger categories. The logic is that all variation caused by differences between larger categories is removed if the larger category is controlled (Huntington-Klein, 2021). In the context of our study, this model accounts for the unique characteristics of different local authorities that do not change over time or change very little and might influence crime rates but are not directly measured. So, because the model controls region specific effects, is called Area Fixed Effect (AFE).
+
+Incorrect model specification can lead to biased estimates or underestimation of the effect of causal interest. For instance, using a simple model that ignores regional fixed effects might attribute variations in crime rates to mobility changes when, in fact, these variations are due to unobserved, time-invariant factors unique to each area. This could result in erroneous claims about the relationship between mobility and crime. If an area consistently has lower or higher crime rates than other areas throughout the observation period, a simple model tends to overestimate or underestimate the crime rates in that area because it assumes that every observation is random and independent. In contrast, hierarchical models, such as fixed effects or random effects models, assume that observations within the same group (e.g., a specific area) are not independent from each other and account for these group-level characteristics. When those fixed effects are controlled, the variation caused by heterogeneity between groups are removed, thus yielding an unbiased effect of the causal interest.
+
+By controlling for unobserved variables that vary between local authorities but are constant over time, the fixed effect model provides a more accurate estimate of the relationship between mobility and crime. For example, inherent characteristics of a neighbourhood that influence crime rates (e.g., socioeconomic status, policing strategies) are controlled for in the model. This approach highlights the variations within each local authorities over time, allowing for a clearer understanding of how changes in mobility patterns affect crime rates within the same locality. This is particularly important during the pandemic when mobility restrictions fluctuated. Applying the correct model is critical. An inappropriate model can lead to erroneous conclusions, significantly impacting policy decisions and theoretical understandings. For instance, failing to use the fixed effect model might suggest that mobility reductions uniformly lead to increases in crime in all areas, disregarding local nuances and fixed characteristics.
+
+```{r load data }
+# Clear all objects from the environment
+rm(list = setdiff(ls(), "crime_mobility_merged"))
+set.seed(135)
+library(readr)
+library(tidyverse)
+# Read the data
+crime_mobility_merged <- read_csv("~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/crime_mobility_merged.csv")
+```
+
+```{r example for simpsons' paradox}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(purrr)
+library(broom)
+library(forcats)
+library(viridis)
+library(patchwork)
+
+
+df_bike <- crime_mobility_merged %>%
+  filter(
+    str_detect(tolower(crime_type), "bicycle theft") |
+      str_detect(tolower(nice_crime_names), "bicycle")
+  ) %>%
+  select(ladcd, ladnm, month, total_crime_count, transit_stations) %>%
+  filter(is.finite(total_crime_count), is.finite(transit_stations))
+
+set.seed(41) # for reproducibility
+lads_random <- sample(unique(df_bike$ladcd), 5)
+df_sub <- df_bike %>%
+  filter(ladcd %in% lads_random) %>%
+  mutate(ladcd = fct_inorder(ladcd))
+
+message("Randomly selected LADCDs: ", paste(lads_random, collapse = ", "))
+
+# --------------------------
+# 3) Fit models
+# --------------------------
+# Simple regression (aggregated data)
+m_simple <- lm(total_crime_count ~ transit_stations, data = df_sub)
+b_simple <- coef(m_simple)[["transit_stations"]]
+
+# Fixed-effects model (different intercepts per LADCD)
+m_fe <- lm(total_crime_count ~ transit_stations + factor(ladcd), data = df_sub)
+b_fe <- coef(m_fe)[["transit_stations"]]
+
+# Extract LADCD-specific intercepts
+alpha0 <- coef(m_fe)[["(Intercept)"]]
+lad_lvls <- levels(df_sub$ladcd)
+alpha_g <- sapply(lad_lvls, function(g) {
+  term <- paste0("factor(ladcd)", g)
+  alpha0 + ifelse(term %in% names(coef(m_fe)), coef(m_fe)[[term]], 0)
+})
+coef_df <- data.frame(ladcd = lad_lvls, intercept = alpha_g, slope = b_fe)
+
+# --------------------------
+# 4) Plot 1: Aggregated scatter with one regression line
+# --------------------------
+p1 <- ggplot(df_sub, aes(x = transit_stations, y = total_crime_count)) +
+  geom_point(alpha = 0.7, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1, color = "#46327e") +
+  labs(
+    title = "Aggregated relationship \nMobility vs. Bike Thefts",
+    #subtitle = sprintf("Single regression line (aggregated data), slope = %.3f", b_simple),
+    x = "Transit stations mobility (%)",
+    y = "Bike theft count",
+    #caption = paste("Each point is a LAD-month from the 5 randomly chosen LADCDs.")
+  ) +
+  theme_minimal(base_size = 12)
+
+print(p1)
+
+# Create a mapping from ladcd to ladnm
+lad_map <- df_sub %>%
+  distinct(ladcd, ladnm)
+
+# Merge that into coef_df so lines get same color labels
+coef_df <- coef_df %>%
+  left_join(lad_map, by = "ladcd")
+
+# Update df_sub to use ladnm instead of ladcd for colors
+df_sub <- df_sub %>%
+  left_join(lad_map, by = "ladcd") %>%
+  mutate(ladnm = forcats::fct_inorder(ladnm))
+
+
+p2 <- ggplot(df_sub, aes(x = transit_stations, y = total_crime_count, color = ladnm)) +
+  geom_point(alpha = 1, size = 1) +
+  geom_abline(
+    data = coef_df,
+    aes(intercept = intercept, slope = slope, color = ladnm),
+    linewidth = 1,
+    show.legend = FALSE
+  ) +
+  scale_color_viridis_d(option = "D", end = 0.9) +
+  labs(
+    title = "Fixed-effects view \nLAD-specific intercepts",
+    #subtitle = sprintf("Common slope = %.3f (area FE model)", b_fe),
+    x = "Transit stations mobility (%)",
+    y = "",
+    color = "",
+    #caption = paste("Each point is a LAD-month from the 5 randomly chosen LADs.")
+  )+
+  theme_minimal(base_size = 12) +
+  theme(
+   legend.position = "none")
+
+print(p2)
+
+
+p_combined <- p1 + p2 + plot_layout(ncol = 2)
+
+p_combined <- p_combined +
+  plot_annotation(
+    #title = "",
+    #subtitle = "",
+    theme = theme(plot.title = element_text(size = 14, face = "bold"))
+  )
+
+p_combined
+
+ggsave(p_combined, file = "results/improved models/p_combined.png", width = 7, height = 3.7)  
+
+
+```
+
+```{r overdispersion check, pearson dispersion statistic}
+phi_by_type <- crime_mobility_merged %>%
+  group_by(crime_type) %>%           
+  nest() %>%                         
+  mutate(
+    fit = map(data, ~ glm(total_crime_count ~ residential,
+                          family = poisson,
+                          data   = .x)),
+    phi = map_dbl(fit, ~ {
+      prs <- residuals(.x, type = "pearson")
+      sum(prs^2) / df.residual(.x)
+    }),
+    observations = map_int(data, nrow)
+  ) %>%
+  select(crime_type, phi, observations) %>%
+  arrange(desc(phi))                 
+
+print(phi_by_type)
+```
+
+```{r Simple and AFE models, eval=FALSE, include=FALSE}
+library(QuantPsyc)
+library(MASS) 
+
+# Define the fit_models function with offset option
+fit_models <- function(data, predictor, crime_type, mobility_indicator, 
+                       outcome = "total_crime_count", group_var = "ladcd", 
+                       with_offset = FALSE) {
+  
+  # build formula with or without offset
+  offset_term <- if (with_offset) " + offset(log(pop))" else ""
+  
+  simple_model <- glm.nb(as.formula(
+    paste(outcome, "~", predictor, offset_term)
+  ), data = data)
+  
+  afe_model <- glm.nb(as.formula(
+    paste(outcome, "~", predictor, "+ as.factor(", group_var, ")", offset_term)
+  ), data = data)
+  
+  return(list(simple = simple_model, afe = afe_model))
+}
+
+# Function to apply fit_models for each nice_crime_names and mobility indicator
+apply_fit_models <- function(crime_name, mobility_indicators, with_offset = FALSE) {
+  data <- crime_mobility_merged %>% filter(nice_crime_names == crime_name)
+  
+  models_list <- list()
+  for (mobility_indicator in mobility_indicators) {
+    options(max.print = 10)
+    
+    # Fit models
+    models <- fit_models(data, mobility_indicator, gsub(" ", "", crime_name), 
+                         mobility_indicator, with_offset = with_offset)
+    
+    # Save models to the list
+    models_list[[paste(crime_name, mobility_indicator, "simple", sep = "_")]] <- models$simple
+    models_list[[paste(crime_name, mobility_indicator, "afe", sep = "_")]] <- models$afe
+  }
+  
+  # Save models list to disk, with "_offset" suffix if offset is used
+  suffix <- if (with_offset) "_offset" else ""
+  file_path <- paste0("models_", gsub(" ", "_", tolower(crime_name)), suffix, ".rds")
+  saveRDS(models_list, file = file_path)
+  
+  return(models_list)
+}
+
+
+# Apply the function separately for each nice_crime_names and mobility indicator
+apply_fit_models("ASB", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Bike Theft", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Burglary", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Damage & Arson", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Drugs", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Other Crime", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Other Theft", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Weapon Possession", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Public Order", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Robbery", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Shoplifting", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Theft Person", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Vehicle Crime", mobility_indicators, with_offset = TRUE)
+apply_fit_models("Violence & Sex Offences", mobility_indicators, with_offset = TRUE)
+
+```
+
+```{r load models}
+# Load the models from disk when needed
+models_list_all <- list()
+models_list_all[["ASB"]] <- readRDS(file = "models_asb_offset.rds")
+models_list_all[["Bike Theft"]] <- readRDS(file = "models_bike_theft_offset.rds")
+models_list_all[["Burglary"]] <- readRDS(file = "models_burglary_offset.rds")
+models_list_all[["Damage & Arson"]] <- readRDS(file = "models_damage_&_arson_offset.rds")
+models_list_all[["Drugs"]] <- readRDS(file = "models_drugs_offset.rds")
+models_list_all[["Other Crime"]] <- readRDS(file = "models_other_crime_offset.rds")
+models_list_all[["Other Theft"]] <- readRDS(file = "models_other_theft_offset.rds")
+models_list_all[["Weapon Possession"]] <- readRDS(file = "models_weapon_possession_offset.rds")
+models_list_all[["Public Order"]] <- readRDS(file = "models_public_order_offset.rds")
+models_list_all[["Robbery"]] <- readRDS(file = "models_robbery_offset.rds")
+models_list_all[["Shoplifting"]] <- readRDS(file = "models_shoplifting_offset.rds")
+models_list_all[["Theft Person"]] <- readRDS(file = "models_theft_person_offset.rds")
+models_list_all[["Vehicle Crime"]] <- readRDS(file = "models_vehicle_crime_offset.rds")
+models_list_all[["Violence & Sex Offences"]] <- readRDS(file = "models_violence_&_sex_offences_offset.rds")
+
+# Verify the length of the models list
+length(models_list_all)
+
+
+options(max.print = 20)
+
+# Loop over all crime types
+for (crime in names(models_list_all)) {
+  
+  # Loop over all mobility indicators
+  for (mobility in mobility_indicators) {
+    
+    # Construct the model name as stored in the list
+    model_name_simple <- paste0(crime, "_", mobility, "_simple")
+    model_name_afe <- paste0(crime, "_", mobility, "_afe")
+    
+    # Check if the model exists in the crime category
+    if (model_name_simple %in% names(models_list_all[[crime]])) {
+      cat("\nSummary for:", model_name_simple, "\n")
+      print(summary(models_list_all[[crime]][[model_name_simple]]))
+    }
+    
+    if (model_name_afe %in% names(models_list_all[[crime]])) {
+      cat("\nSummary for:", model_name_afe, "\n")
+      print(summary(models_list_all[[crime]][[model_name_afe]]))
+    }
+  }
+}
+
+
+```
+
+```{r model summaries}
+# Load necessary libraries
+library(broom)
+library(dplyr)
+library(tidyr)
+
+# Function to extract model details
+extract_model_summary <- function(model, model_name, crime_type) {
+  # Get coefficients, standard errors, and p-values
+  model_summary <- tidy(model, conf.int = TRUE) %>%
+    mutate(Model = model_name, Crime_Type = crime_type) %>%
+    select(Crime_Type, Model, term, estimate, conf.low, conf.high, std.error, p.value)
+
+  # Calculate pseudo R-squared (Nagelkerke R² approximation)
+  pseudo_r2 <- with(summary(model), 1 - deviance/null.deviance)
+
+  # Add R² to the summary
+  model_summary <- model_summary %>%
+    mutate(Pseudo_R2 = pseudo_r2)
+
+  return(model_summary)
+}
+
+# Initialize an empty dataframe to store results
+model_results <- data.frame()
+
+# Loop through all crime types
+for (crime_type in names(models_list_all)) {
+  # Retrieve the stored model
+  models <- models_list_all[[crime_type]]
+
+  # Ensure there are two models in each crime type entry
+  if (length(models) >= 2) {
+    simple_model <- models[[1]]  # Assuming first is the simple model
+    afe_model <- models[[2]]  # Assuming second is the AFE model
+
+    # Extract summaries
+    simple_summary <- extract_model_summary(simple_model, "Simple", crime_type)
+    afe_summary <- extract_model_summary(afe_model, "AFE", crime_type)
+
+    # Combine results
+    model_results <- bind_rows(model_results, simple_summary, afe_summary)
+  }
+}
+
+# Format the table nicely
+model_results <- model_results %>%
+  mutate(
+    estimate = round(estimate, 3),
+    conf.low = round(conf.low, 3),
+    conf.high = round(conf.high, 3),
+    std.error = round(std.error, 3),
+    p.value = round(p.value, 3),
+    Pseudo_R2 = round(Pseudo_R2, 3)
+  )
+
+# Display the final table
+library(ace_tools)  # Ensure ace_tools is available for displaying tables
+ace_tools::display_dataframe_to_user(name = "Model Summary Table", dataframe = model_results)
+
+```
+
+
+```{r Extract coefficients}
+library(dplyr)
+library(tidyr)
+
+# Function to calculate standardized beta coefficient and p-value for a given model, predictor, and outcome
+calculate_standardized_beta <- function(model, model_data, outcome, predictor) {
+  # Extract the unstandardized coefficient for the predictor
+  unstandardized_beta <- coef(model)[predictor]
+  
+  # Calculate the standard deviation of the predictor variable
+  sd_predictor <- sd(model_data[[predictor]], na.rm = TRUE)
+  
+  # Calculate the mean response of the outcome variable
+  mean_response <- mean(model_data[[outcome]], na.rm = TRUE)
+  
+  # Calculate the standard deviation of the outcome variable on the log scale
+  sd_outcome <- sd(log(model_data[[outcome]] + mean_response), na.rm = TRUE)
+  
+  # Calculate the standardized beta coefficient
+  standardized_beta <- unstandardized_beta * (sd_predictor / sd_outcome)
+  
+  # Extract the p-value for the predictor
+  summary_model <- summary(model)
+  p_value <- summary_model$coefficients[predictor, "Pr(>|z|)"]
+  
+  return(list(standardized_beta = standardized_beta, p_value = p_value))
+}
+
+# Define the outcome and predictor variables for each model
+outcome_vars <- c(
+  "ASB" = "total_crime_count",
+  "Bike Theft" = "total_crime_count",
+  "Burglary" = "total_crime_count",
+  "Damage & Arson" = "total_crime_count",
+  "Drugs" = "total_crime_count",
+  "Other Crime" = "total_crime_count",
+  "Other Theft" = "total_crime_count",
+  "Weapon Possession" = "total_crime_count",
+  "Public Order" = "total_crime_count",
+  "Robbery" = "total_crime_count",
+  "Shoplifting" = "total_crime_count",
+  "Theft Person" = "total_crime_count",
+  "Vehicle Crime" = "total_crime_count",
+  "Violence & Sex Offences" = "total_crime_count"
+)
+
+# Define the nice crime names list
+nice_crime_names <- c(
+  "ASB" = "ASB",
+  "Bike Theft" = "Bike Theft",
+  "Burglary" = "Burglary",
+  "Damage & Arson" = "Damage & Arson",
+  "Drugs" = "Drugs",
+  "Other Crime" = "Other Crime",
+  "Other Theft" = "Other Theft",
+  "Weapon Possession" = "Weapon Possession",
+  "Public Order" = "Public Order",
+  "Robbery" = "Robbery",
+  "Shoplifting" = "Shoplifting",
+  "Theft Person" = "Theft Person",
+  "Vehicle Crime" = "Vehicle Crime",
+  "Violence & Sex Offences" = "Violence & Sex Offences"
+)
+
+# List of mobility indicators
+mobility_indicators <- c("retail_and_recreation", "grocery_and_pharmacy", "parks", "transit_stations", "workplaces", "residential")
+
+# Create an empty data frame to store the results
+results_df <- data.frame(
+  Crime_Type = character(),
+  Model_Type = character(),
+  Mobility_Index = character(),
+  Std_beta = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each model and extract standardized beta coefficients and p-values
+for (crime_type in names(models_list_all)) {
+  crime_models <- models_list_all[[crime_type]]
+  outcome <- outcome_vars[crime_type]
+  
+  # Get the nice crime name
+  nice_crime_name <- nice_crime_names[crime_type]
+  
+  # Filter the data for the current crime type
+  model_data <- crime_mobility_merged %>% filter(nice_crime_names == nice_crime_name)
+  
+  for (model_name in names(crime_models)) {
+    model <- crime_models[[model_name]]
+    
+    # Calculate standardized beta coefficients and p-values for each mobility indicator
+    for (predictor in mobility_indicators) {
+      if (predictor %in% names(coef(model))) {
+        result <- calculate_standardized_beta(model, model_data, outcome, predictor)
+        results_df <- rbind(results_df, data.frame(
+          Crime_Type = nice_crime_name,
+          Model_Type = model_name,
+          Mobility_Index = predictor,
+          Std_beta = result$standardized_beta,
+          p_value = result$p_value,
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+  }
+}
+
+# Add significance level
+results_df <- results_df %>%
+  mutate(Significance = ifelse(p_value < 0.001, "***",
+                               ifelse(p_value < 0.01, "**",
+                                      ifelse(p_value < 0.05, "*", ""))),
+         Label = paste0(round(Std_beta, 2), Significance))
+
+# Convert Crime_Type to a factor with levels in a specific order
+results_df$Crime_Type <- factor(results_df$Crime_Type, levels = rev(sort(unique(results_df$Crime_Type))))
+
+# Remove row names
+rownames(results_df) <- NULL
+
+# Categorize Model_Type
+results_df$Model_Type <- ifelse(grepl("simple", results_df$Model_Type), "simple", "afe")
+
+# Round Std_beta and p_value to 3 decimal places
+results_df <- results_df %>%
+  mutate(
+    Std_beta = round(as.numeric(Std_beta), 2),
+    p_value = round(as.numeric(p_value), 3)
+  )
+
+# Add Significance column
+results_df$Significance <- ifelse(results_df$p_value < 0.001, "***",
+                                  ifelse(results_df$p_value < 0.01, "**",
+                                         ifelse(results_df$p_value < 0.05, "*", "")))
+
+# Create Label column
+results_df$Label <- paste0(round(results_df$Std_beta, 3))
+results_df <- results_df %>%
+  mutate(Label = paste0(sprintf("%.2f", Std_beta), Significance))  
+
+
+# Print the results data frame
+print(results_df)
+
+```
+
+```{r Simple and AFE coefficients Heat Maps}
+library(ggplot2)
+library(dplyr)
+
+# Define new labels
+new_labels <- c(
+  "retail_and_recreation" = "Retail & Recreation",
+  "grocery_and_pharmacy" = "Grocery & Pharmacy",
+  "parks" = "Parks",
+  "transit_stations" = "Transit Stations",
+  "workplaces" = "Workplaces",
+  "residential" = "Residential"
+)
+
+# Wrap labels for better visualization
+new_labels_wrapped <- str_wrap(new_labels, width = 10)
+
+# Define crime type labels and sort them alphabetically
+crime_labels <- sort(unique(results_df$Crime_Type))
+wrapped_crime_labels <- str_wrap(crime_labels, width = 10)
+
+# Ensure the labels and their lengths match correctly
+mobility_labels <- names(new_labels)
+mobility_labels_wrapped <- str_wrap(unname(new_labels), width = 10)
+
+# Add new labels to results_df
+results_df <- results_df %>%
+  mutate(Mobility_Label = factor(Mobility_Index, levels = mobility_labels, labels = mobility_labels_wrapped),
+         Crime_Label = factor(Crime_Type, levels = crime_labels, labels = wrapped_crime_labels))
+
+desired_crime_order <- c(
+  "Bike Theft", "Burglary", "Damage & Arson", "Vehicle Crime",
+  "Other Theft", "Robbery", "Shoplifting", "Theft Person",
+  "Public Order", "Violence & Sex Offences", "Weapon Possession",
+  "ASB", "Drugs", "Other Crime"
+)
+
+# Re-wrap the desired labels for better visualization (optional)
+wrapped_desired_order <- str_wrap(desired_crime_order, width = 10)
+
+# Convert to factors in desired order
+results_df <- results_df %>%
+  mutate(Crime_Label = factor(Crime_Type, 
+                              levels = rev(desired_crime_order), 
+                              labels = rev(wrapped_desired_order)))
+
+# Split the results_df into simple and AFE models
+simple_results <- results_df %>% filter(Model_Type == "simple")
+afe_results <- results_df %>% filter(Model_Type == "afe")
+
+# Create heatmap for simple model coefficients
+simple_heatmap <- ggplot(simple_results, aes(x = Mobility_Label, y = Crime_Label, fill = Std_beta)) +
+  geom_tile() + 
+  geom_text(aes(label = Label), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name = "Std. Beta") +
+  theme_minimal() +  
+  theme(axis.text.x = element_text(size = 14, hjust = 0.5),
+        axis.text.y = element_text(size = 14),
+        plot.title = element_text(size = 18),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        plot.margin = margin(0, 0, -0.2, -0.5, "cm"),
+        legend.position = "",
+        panel.grid.minor = element_blank()) +
+  labs(x = "", y = "", title = "Std. Beta Coefficients - simple models") 
+
+# Create heatmap for AFE model coefficients
+afe_heatmap <- ggplot(afe_results, aes(x = Mobility_Label, y = Crime_Label, fill = Std_beta)) +
+  geom_tile() + 
+  geom_text(aes(label = Label), color = "black", size = 4, vjust = 0.5, hjust = 0.5) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "gray99", midpoint = 0, limit = c(-1, 1), space = "Lab", name = "Std. Beta") +
+  theme_minimal() +  
+  theme(axis.text.x = element_text(size = 14, hjust = 0.5),
+        axis.text.y = element_text(size = 14),
+        plot.title = element_text(size = 18),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        plot.margin = margin(0, 0, -0.2, -0.5, "cm"),
+        legend.position = "",
+        panel.grid.minor = element_blank()) +
+  labs(x = "", y = "", title = "Std. Beta Coefficients - AFE models") 
+
+
+# Print the heatmaps
+print(simple_heatmap)
+print(afe_heatmap)
+
+ggsave(simple_heatmap, file = "results/improved models/simple_heatmap_offset.png", width = 7.5, height = 11.75)  
+ggsave(afe_heatmap, file = "results/improved models/afe_heatmap_offset.png", width = 7.5, height = 11.75)  
+
+```
+
+# The Impact of Mobility on Crime on Different Scales
+
+The four heat maps provide a comprehensive view of how crime rates and mobility indexes interacted during the COVID-19 pandemic. While they all relate to the same general topic, each heat map employs different methods and levels of data aggregation, which can lead to varying insights.
+
+The first heat map aggregates monthly crime counts and mobility data at the national level. This approach essentially smooths out local variations, giving us a broad, overall picture of how mobility changes across the entire country correlated with changes in different crime types. With this national aggregation, the data points represent the collective experience of the whole country for each month. This can be useful for seeing general trends but may mask local nuances. However, it may oversimplify the relationships by averaging out local variations. For example, if certain local areas experienced significant changes in crime rates due to unique local factors, these nuances would be lost in the national aggregation. This can lead to conclusions that are not reflective of specific local conditions.
+
+The second heat map dives deeper by looking at local authority-level data. Here, each data point represents the crime counts and mobility changes for each local authority each month. This more granular approach allows for the identification of regional differences that are not visible in the national data. For example, the mobility-crime relationship might be stronger in urban areas compared to rural areas, and this level of detail is only captured when you break down the data by local authorities. However, this method can introduce complexity due to the variability across numerous local authorities. Some localities might have unique characteristics or interventions that significantly influence the results, making it harder to generalize findings across all areas.
+
+Moving to the third heat map, we see standardised beta coefficients from regression models. Instead of simple correlations, this method uses regression analysis to quantify the relationship between crime rates and mobility changes. The standardisation process adjusts for different scales of the variables, making it easier to compare the strength of these relationships across different mobility indexes and crime types. This model gives us a sense of how much a change in mobility might predict a change in crime rates, offering a more nuanced view than simple correlations. However, it assumes that the relationship between variables is linear and that other confounding factors are either controlled or negligible. If these assumptions are violated, the results might be misleading.
+
+The fourth heat map also shows standardised beta coefficients but includes local authority as a fixed effect. This means that the model accounts for unique characteristics of each local authority that might influence crime rates independently of mobility changes. By controlling for these fixed effects, the analysis aims to isolate the impact of mobility changes on crime rates more accurately. This helps to ensure that the observed relationships are not confounded by other local factors, providing a clearer picture of the direct impact of mobility on crime. This method can effectively account for differences between local authorities, such as inherent population size, general economic conditions, or baseline crime rates. However, it does not control for changes within each local authority over time, such as significant population fluctuations, economic shifts, or local policy changes that occur during the observation period.
+
+While each method offers valuable insights, they also demonstrate how methodological choices can significantly impact results. It’s crucial to interpret findings within the context of the chosen methodology and consider potential limitations. Using a combination of methods can provide a more comprehensive understanding and help cross-verify findings, leading to more robust conclusions and effective policy recommendations. Thus, the insights from each heat map are valid within their methodological contexts, but they also emphasize the need for careful methodological selection and interpretation in research.
+
+Each coefficients matrix consists of 84 crime-mobility combinations, making it impractical to interpret all of them individually. Therefore, we have selected five specific crime-mobility pairs to focus on, based on empirical evidence supporting the RAT (Halford et al., 2020). These pairs are burglary with residential mobility, vehicle crime with residential mobility, other theft with retail and recreation mobility, shoplifting with retail and recreation mobility, and violence and sexual offences with workplaces mobility. Interpreting the results for the selected crime-mobility pairs across the different models reveals how methodological choices can significantly impact our understanding of the data. Here’s a comparative analysis of the results for selected crime-mobility pairs across the national-level correlations, local authority-level correlations, and regression models with and without fixed effects.
+
+## Burglary and Residential Mobility
+
+In the national-level correlation heat map, burglary shows a weak and inconsistent relationship with residential mobility (r = 0.42), suggesting that on a broad scale, changes in residential mobility did not significantly impact burglary rates across the country. This could indicate that other factors beyond residential mobility were more influential in determining burglary rates during the pandemic. When examining the local authority-level heat map, the relationship remains weak (r=−0.03), but slight variations appear, indicating some local differences. This suggests that in certain areas, changes in residential mobility might have had more noticeable effects on burglary, but these effects are not strong enough to be evident on a national scale.
+
+The third heat map, which uses regression models to calculate standardised beta coefficients, shows small and mixed effects of residential mobility on burglary (β=0.002). However, after we controlled time invariant local differences, the impact of residential mobility on burglary incidents increases (β=−0.148).
+
+## Vehicle Crime and Residential Mobility
+
+For vehicle crime, the national-level correlation heat map indicates a moderate relationship with residential mobility (r=0.76). This suggests that increased residential mobility during the pandemic had a noticeable impact on vehicle crime rates across the country, likely due to more vehicles being parked in residential areas, increasing opportunities for theft or vandalism. The local authority-level heat map shows similar patterns (r=−0.08), though with some variability, indicating that the impact of residential mobility on vehicle crime was more pronounced in certain areas. This local-level detail suggests that urban areas with higher residential mobility may have experienced more vehicle crimes compared to rural areas.
+
+In the regression models, the third heat map shows moderate positive beta coefficients (β=0.004), indicating that increases in residential mobility are associated with increases in vehicle crime. This relationship holds even when controlling for local authority fixed effects in the fourth heat map (β=−0.372), suggesting that the increased residential presence likely led to more opportunities for vehicle-related crimes, independent of other local factors.
+
+## Other Theft and Retail & Recreation Mobility
+
+The national-level correlation heat map for other theft shows a strong relationship with retail and recreation mobility (r=0.86), indicating that increased activity in these areas during the pandemic was closely associated with higher rates of other theft. This pattern persists in the local authority-level heat map (r=−0.05), demonstrating that this relationship is robust across different regions. This suggests that local variations did not significantly alter the overall trend, and the increase in retail and recreation mobility consistently led to higher theft rates.
+
+The regression models, shown in the third heat map, reinforce this finding with high beta coefficients (β=−0.283), indicating a strong predictive relationship between retail and recreation mobility and other theft. This relationship remains strong even after accounting for local authority fixed effects in the fourth heat map (β=−0.179), highlighting that increased activity in retail and recreational spaces directly contributed to higher theft rates, regardless of local-specific characteristics.
+
+## Shoplifting and Retail & Recreation Mobility
+
+For shoplifting, the national-level heat map indicates a strong correlation with retail and recreation mobility (r=0.67), suggesting that changes in these areas significantly impacted shoplifting rates across the country. The local authority-level heat map shows a similar strong relationship (r=−0.03), although with some regional variations. This indicates that while the overall trend is clear, certain areas experienced more pronounced effects than others, possibly due to differences in local retail environments and security measures.
+
+The regression models, depicted in the third heat map, show strong positive beta coefficients (β=−0.447), confirming that increased mobility in retail areas led to higher rates of shoplifting. This relationship holds even after adjusting for local authority-specific factors in the fourth heat map (β=0.243), suggesting that the reopening of retail spaces and increased consumer presence were significant drivers of shoplifting during the pandemic.
+
+## Violence and Sexual Offences and Workplaces Mobility
+
+The national-level correlation heat map for violence and sexual offences shows a moderate relationship with workplaces mobility (r=0.69), indicating that changes in workplace activity during the pandemic had a notable impact on these crime rates. The local authority-level heat map reveals similar patterns (r=0.04), though with some variability, suggesting that the impact of workplace mobility on violence and sexual offences varied across regions. This could be due to differences in workplace environments and local conditions.
+
+The regression models in the third heat map show moderate positive beta coefficients (β=−0.34), indicating that as mobility in workplaces increased, so did incidents of violence and sexual offences. This relationship persists even after accounting for local authority fixed effects in the fourth heat map (β=0.154), suggesting that increased workplace activity, possibly as people returned to work, contributed to higher rates of these crimes, independent of other local factors.
+
+In summary, these heat maps illustrate how different methods and levels of data aggregation can lead to varied insights. National-level correlations provide a broad overview, local authority-level correlations reveal regional differences, regression models quantify relationships, and fixed effects models isolate the direct impact of mobility changes. Each approach offers valuable information, helping us understand the complex dynamics between mobility and crime during the pandemic.
+
+## Sensitivity analysis and Multicollinerity
+
+```{r}
+# Load the package
+library(rcme)
+library(dplyr)
+
+# Load necessary packages
+library(ggplot2)
+library(gridExtra)
+
+# Add a pre-factorized version of ladcd to the dataset
+crime_mobility_merged <- crime_mobility_merged %>%
+  mutate(ladcd_factor = as.factor(ladcd))
+
+# Define the plausible error values based on reports
+R_values <- c(0.45, 0.90, 1.65)  # Systematic error (recording rates)
+D_values <- c(0.85, 1.00, 1.15)  # Differential error (risk ratios)
+
+# Function to apply rcme_out to the model for each predictor and save results
+apply_rcme <- function(crime_name, predictor) {
+  # Define the model name based on the predictor
+  model_name <- paste(crime_name, predictor, "afe", sep = "_")
+  
+  # Filter the dataset for the current crime type
+  data <- crime_mobility_merged %>% filter(nice_crime_names == crime_name)
+  
+  # Extract the specific model from the list
+  model <- models_list_all[[crime_name]][[model_name]]
+  
+  # Extract model formula and replace dynamic factor conversion
+  model_formula <- formula(model)
+  model_formula_char <- gsub("as.factor\\(ladcd\\)", "ladcd_factor", deparse(model_formula))
+  
+  # Print the model formula for debugging
+  cat("Model formula:", model_formula_char, "\n")
+  
+  # Check if all variables in the formula are in the data
+  all_vars <- all.vars(as.formula(model_formula_char))
+  cat("Variables in the formula:", all_vars, "\n")
+  cat("Variables in the data:", names(data), "\n")
+  
+  if (all(all_vars %in% names(data))) {
+    tryCatch({
+      # Perform sensitivity analysis using rcme_out
+      sensitivity_results <- rcme_out(
+        formula = model_formula_char,
+        data = data,
+        focal_variable = predictor,
+        R = R_values,
+        D = D_values
+      )
+      
+      # Save the results to a file for later analysis
+      result_file_path <- paste0("sensitivity_results_", gsub(" ", "_", tolower(crime_name)), "_", model_name, "_", predictor, ".rds")
+      saveRDS(sensitivity_results, file = result_file_path)
+      
+    })
+  } 
+}
+
+# Apply the function to all crime types and predictors for the specified model type
+for (crime_name in names(models_list_all)) {
+  for (predictor in mobility_indicators) {
+    apply_rcme(crime_name, predictor)
+  }
+}
+
+# Create a directory to save individual plots
+if (!dir.exists("sensitivity_plots")) {
+  dir.create("sensitivity_plots")
+}
+
+# Function to load the saved results and plot them
+plot_sensitivity_results <- function(crime_name, predictor) {
+  # Define the model name based on the predictor
+  model_name <- paste(crime_name, predictor, "afe", sep = "_")
+  
+  # Load the sensitivity results from the file
+  result_file_path <- paste0("sensitivity_results_", gsub(" ", "_", tolower(crime_name)), "_", model_name, "_", predictor, ".rds")
+  cat("Loading results from:", result_file_path, "\n")
+  
+  sensitivity_results <- readRDS(result_file_path)
+  
+  # Plot the results to visualize the impact of measurement errors
+  plot_path <- paste0("sensitivity_plots/sensitivity_plot_", gsub(" ", "_", tolower(crime_name)), "_", model_name, "_", predictor, ".png")
+  cat("Saving plot to:", plot_path, "\n")
+  
+  png(plot_path)
+  print(rcme_sim_plot(sensitivity_results))  # Ensure the plot is printed to the graphics device
+  dev.off()
+}
+
+# Apply the function to all predictors for the specified crime types
+for (crime_name in names(models_list_all)) {
+  for (predictor in mobility_indicators) {
+    plot_sensitivity_results(crime_name, predictor)
+  }
+}
+
+# Combine individual plots into a panel plot
+plot_files <- list.files("sensitivity_plots", full.names = TRUE)
+plot_list <- lapply(plot_files, function(file) {
+  img <- png::readPNG(file)
+  grid::rasterGrob(img, interpolate = TRUE)
+})
+
+# Define the layout of the panel plot
+ncol <- length(mobility_indicators)
+nrow <- length(names(models_list_all))
+
+grid.arrange(grobs = plot_list, ncol = ncol, nrow = nrow)
+
+```
+
+```{r}
+library(car)
+library(officer)
+library(flextable)
+
+# Initialize an empty list to store VIF results
+vif_results <- list()
+
+# Iterate over each unique crime type in the dataset
+for (crime_name in unique(crime_mobility_merged$nice_crime_names)) {
+  # Filter the dataset for the current crime type
+  data <- crime_mobility_merged %>% filter(nice_crime_names == crime_name)
+  
+  # Fit a linear model using all mobility indicators as predictors
+  mobility_model <- lm(total_crime_count ~ retail_and_recreation + grocery_and_pharmacy + parks + transit_stations + workplaces + residential, data = data)
+  
+  # Calculate VIF values for each predictor in the model
+  vif_values <- vif(mobility_model)
+  
+  # Round the VIF values to 2 decimal points
+  vif_values <- round(vif_values, 2)
+  
+  # Create a data frame for the VIF values
+  vif_df <- data.frame(
+    Predictor = names(vif_values),
+    VIF = as.numeric(vif_values),
+    Crime_Type = crime_name
+  )
+  
+  # Add the VIF data frame to the results list
+  vif_results[[crime_name]] <- vif_df
+}
+
+# Combine all VIF data frames into a single data frame
+vif_summary_df <- do.call(rbind, vif_results)
+
+# Create the APA style table with rounded VIF values
+vif_wide <- vif_summary_df %>%
+  pivot_wider(names_from = Predictor, values_from = VIF)
+
+# Rename the columns for better visualization
+vif_wide <- vif_wide %>%
+  rename_with(~ new_labels[.], -Crime_Type)
+
+# Create a flextable
+vif_flextable <- flextable(vif_wide) %>%
+  set_caption("VIF Values for Mobility Indicators by Crime Type")
+
+# Save the flextable to a Word document
+doc <- read_docx() %>%
+  body_add_flextable(value = vif_flextable) %>%
+  body_add_par(" ", style = "Normal")
+
+# Save the Word document
+doc_file <- "vif_table.docx"
+print(doc, target = doc_file)
+
+
+```
+
+## Effect Size
+
+```{r Effect size, include=FALSE}
+# Function to calculate effect size
+calculate_effect_size <- function(model, model_data, outcome, predictor) {
+  # Extract the unstandardized coefficient for the predictor
+  unstandardized_beta <- coef(model)[predictor]
+  
+  # Calculate the effect size as percent change
+  percent_change <- (exp(unstandardized_beta) - 1) * 100
+  
+  # Extract the p-value for the predictor
+  summary_model <- summary(model)
+  p_value <- summary_model$coefficients[predictor, "Pr(>|t|)"]
+  
+  return(list(percent_change = percent_change, p_value = p_value))
+}
+
+# Create an empty data frame to store the results
+results_df <- data.frame(
+  Crime_Type = character(),
+  Model_Type = character(),
+  Mobility_Index = character(),
+  Percent_Change = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through each model and extract effect sizes and p-values
+for (crime_type in names(models_list_all)) {
+  crime_models <- models_list_all[[crime_type]]
+  outcome <- outcome_vars[crime_type]
+  
+  # Get the nice crime name
+  nice_crime_name <- nice_crime_names[crime_type]
+  
+  # Filter the data for the current crime type
+  model_data <- crime_mobility_merged %>% filter(nice_crime_names == nice_crime_name)
+  
+  for (model_name in names(crime_models)) {
+    model <- crime_models[[model_name]]
+    
+    # Calculate effect sizes and p-values for each mobility indicator
+    for (predictor in mobility_indicators) {
+      if (predictor %in% names(coef(model))) {
+        result <- calculate_effect_size(model, model_data, outcome, predictor)
+        results_df <- rbind(results_df, data.frame(
+          Crime_Type = nice_crime_name,
+          Model_Type = model_name,
+          Mobility_Index = predictor,
+          Percent_Change = result$percent_change,
+          p_value = result$p_value,
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+  }
+}
+
+# Add significance level
+results_df <- results_df %>%
+  mutate(Significance = ifelse(p_value < 0.001, "***",
+                               ifelse(p_value < 0.01, "**",
+                                      ifelse(p_value < 0.05, "*", ""))),
+         Label = paste0(round(Percent_Change, 2), Significance))
+
+
+# Remove row names
+rownames(results_df) <- NULL
+
+# Categorize Model_Type
+results_df$Model_Type <- ifelse(grepl("simple", results_df$Model_Type), "simple", "afe")
+
+# Round Percent_Change and p_value to 3 decimal places
+results_df <- results_df %>%
+  mutate(
+    Percent_Change = round(as.numeric(Percent_Change), 2),
+    p_value = round(as.numeric(p_value), 3)
+  )
+
+
+# Group crime types into specified groups
+results_df <- results_df %>%
+  mutate(Crime_Group = case_when(
+    Crime_Type %in% c("Other Theft", "Robbery", "Shoplifting", "Theft Person") ~ "Property crime around retail and entertainment areas",
+    Crime_Type %in% c("Bike Theft", "Burglary", "Damage & Arson", "Vehicle Crime") ~ "Property crime around residential areas",
+    Crime_Type %in% c("Public Order", "Violence & Sex Offences", "Weapon Possession") ~ "Violence and public order",
+    Crime_Type %in% c("ASB", "Drugs", "Other Crime") ~ "ASB and miscellaneous"
+  ))
+
+write.csv(results_df, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/effect_size_data_not_ordered.csv')
+
+
+```
+
+```{r plot_crime_groups, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(viridis)
+library(dplyr)
+library(scales)
+
+# Define the order of Mobility_Index for plotting
+mobility_order <- c("residential", "workplaces", "transit_stations", "parks", "grocery_and_pharmacy", "retail_and_recreation" )
+
+# Define new labels for the legend
+new_labels <- c(
+  "retail_and_recreation" = "Retail &\nRecreation",
+  "grocery_and_pharmacy" = "Grocery &\nPharmacy",
+  "parks" = "Parks",
+  "transit_stations" = "Transit\nStations",
+  "workplaces" = "Workplaces",
+  "residential" = "Residential"
+)
+
+# Update the data frame to include a position for each combination
+results_df <- results_df %>%
+  mutate(Mobility_Index = factor(Mobility_Index, levels = rev(mobility_order))) %>%
+  arrange(Crime_Type, Mobility_Index, Model_Type) %>%
+  mutate(Composite_Label = paste(Crime_Type, Mobility_Index, sep = ": "))
+
+desired_crime_order <- c(
+  "Other Crime", "Drugs", "ASB", 
+  "Weapon Possession", "Violence & Sex Offences", "Public Order", 
+  "Theft Person", "Shoplifting", "Robbery",  "Other Theft", 
+  "Vehicle Crime", "Damage & Arson", "Burglary", "Bike Theft")
+
+# Set factor levels correctly
+results_df <- results_df %>%
+  mutate(
+    Crime_Type = factor(Crime_Type, levels = desired_crime_order),
+    Mobility_Index = factor(Mobility_Index, levels = mobility_order)
+  )
+
+# Now generate Composite_Label levels in correct nested order
+composite_levels <- with(expand.grid(Mobility_Index = mobility_order, 
+                                     Crime_Type = desired_crime_order),
+                         paste(Crime_Type, Mobility_Index, sep = ": "))
+
+# Create Composite_Label with correct factor levels
+results_df <- results_df %>%
+  mutate(
+    Composite_Label = paste(Crime_Type, Mobility_Index, sep = ": "),
+    Composite_Label = factor(Composite_Label, levels = rev(composite_levels))
+  )
+levels(results_df$Composite_Label)
+
+
+write.csv(results_df, file = '/Users/hulyaseyidoglu/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/data/effect_size_data.csv')
+
+
+# Define positions for vertical lines manually based on your data
+crime_type_boundaries <- cumsum(c(6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6)) + 0.5
+
+# Create the plot for each group
+# Create the plot for each group
+plots <- list()
+plot_names <- character()
+
+for (i in seq_along(unique(results_df$Crime_Group))) {
+  group <- unique(results_df$Crime_Group)[i]
+  group_data <- results_df %>% filter(Crime_Group == group)
+  
+  plot <- ggplot(group_data, aes(x = Composite_Label, y = Percent_Change, color = Model_Type, shape = Mobility_Index)) +
+    geom_point(size = 3, position = position_dodge(width = 0.8)) +  
+    geom_hline(yintercept = 0, size = 0.5) +
+    geom_text(aes(label = Significance), size = 3, vjust = -0.3, position = position_dodge(width = 0.9), color = "black") + 
+    scale_y_continuous(breaks = pretty_breaks(n = 10)) + 
+    labs(x = "", y = "Effect\nSize\n(%)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(hjust = 1, size = 16, margin = margin(t = 0, b = 0), colour = 'black'),  
+          axis.text.y = element_text(size = 16),
+          axis.title.y = element_text(angle = 0, size = 14, hjust = 0.5, vjust = 0.5),
+          legend.text = element_text(size = 12),
+          legend.title = element_blank(),
+          plot.margin = margin(t = 5, r = 0, b = 0, l = 0)) +  
+    scale_x_discrete(labels = function(x) ifelse(grepl("residential", x), str_wrap(sub(":.*", "", x), width = 12), ""))+
+    scale_color_manual(values = viridis_pal(option = "D")(length(unique(group_data$Model_Type)))) +  
+    scale_shape_manual(values = rep(15:20, length.out = length(unique(group_data$Mobility_Index))), 
+                       labels = new_labels, 
+                       breaks = mobility_order) +  
+    geom_vline(xintercept = crime_type_boundaries, linetype = "dashed", color = "red")
+  
+  name <- paste0("plot", i)
+  plots[[name]] <- plot
+  plot_names[i] <- group
+  
+  print(plot)
+}
+
+# Assign plots to environment
+list2env(plots, .GlobalEnv)
+
+# Save plots AFTER the loop
+for (i in seq_along(plots)) {
+  plot_file_path <- paste0('~/Library/CloudStorage/OneDrive-UniversityofLeeds/Phd Projects/mobility_crime RQ2/results/improved models/mob_effect_glm_offset_',
+                           gsub(" ", "_", plot_names[i]), '.png')
+  ggsave(plots[[i]], file = plot_file_path, width = 8, height = 5, dpi = 300)
+}
+
+
+```
+
+(INSERT EFFECT SIZE CHARTS HERE)
+
+The analysis investigates the relationship between various mobility indices and different types of crime, leveraging Google's community mobility data and police-reported crime incidents. The results are presented in terms of percentage changes, offering a more intuitive understanding of the effects. Below is a detailed interpretation of the results, considering each crime type and its corresponding mobility index.
+
+### Property Crime Around Retail and Entertainment Areas
+
+#### Other Theft
+
+In the simple model, increased visits to grocery and pharmacy areas are associated with a significant decrease in other theft incidents. Specifically, a 10% increase in visits to these areas leads to a 7.32% decrease in other theft incidents. This result is statistically significant at p \< 0.001. However, when area-specific effects are controlled for in the AFE model, the relationship reverses. A 10% increase in visits to grocery and pharmacy areas results in a 10.12% increase in other theft incidents, also statistically significant at p \< 0.001. This suggests that while initial observations indicate a protective effect of increased grocery and pharmacy visits, controlling for area-specific characteristics reveals a potential risk factor. For parks, the simple model shows that a 10% increase in visits is associated with a 1.14% decrease in other theft incidents, which is significant at p \< 0.001. In contrast, the AFE model indicates that the same increase in visits to parks results in a 1.33% increase in other theft incidents (p \< 0.001). This reversal in the relationship, once area-specific effects are controlled, highlights the importance of local context in understanding the impact of park visits on theft rates. Increased residential mobility is strongly associated with a decrease in other theft incidents in both models. The simple model shows that a 10% increase in time spent at home is associated with a 17.22% decrease in other theft incidents (p \< 0.001). The AFE model indicates an even larger effect, with a 25.90% decrease (p \< 0.001). These findings consistently suggest that increased residential mobility significantly reduces other theft incidents, highlighting the protective role of spending more time at home. The simple model shows that a 10% increase in visits to retail and recreation areas leads to a 2.62% decrease in other theft incidents (p \< 0.001). However, the AFE model reveals a contrasting result, with the same increase in visits associated with a 6.26% increase in other theft incidents (p \< 0.001). This significant change underscores the importance of controlling for area-specific effects, which can alter the observed relationship between mobility in retail and recreation areas and theft rates. Increased visits to transit stations are associated with a decrease in other theft incidents according to the simple model. A 10% increase in visits to transit stations is associated with a 4.87% decrease in other theft incidents (p \< 0.001). However, the AFE model indicates that the same increase leads to a 7.37% increase in other theft incidents (p \< 0.001). This reversal in the relationship after controlling for area-specific effects suggests that increased mobility around transit stations may increase theft risk in certain areas. For workplace mobility, the simple model shows a 10% increase in visits to workplaces is associated with a 1.88% decrease in other theft incidents (p \< 0.05). However, the AFE model indicates a 11.29% increase in other theft incidents (p \< 0.001) with the same increase in workplace visits. This significant change highlights the role of area-specific characteristics in understanding the relationship between workplace mobility and other theft incidents.
+
+#### Shoplifting
+
+In the simple model, increased visits to grocery and pharmacy areas are associated with a significant decrease in shoplifting incidents. Specifically, a 10% increase in visits to these areas leads to a 2.67% decrease in shoplifting incidents, and this result is statistically significant at p \< 0.001. However, when area-specific effects are controlled for in the AFE model, the relationship reverses. A 10% increase in visits to grocery and pharmacy areas results in a 10.71% increase in shoplifting incidents, also statistically significant at p \< 0.001. This suggests that while initial observations indicate a protective effect of increased grocery and pharmacy visits, controlling for area-specific characteristics reveals a potential risk factor. For parks, the simple model shows that a 10% increase in visits is associated with a 1.36% decrease in shoplifting incidents, which is significant at p \< 0.001. In contrast, the AFE model indicates that the same increase in visits to parks results in a 0.8% increase in shoplifting incidents (p \< 0.001). This reversal in the relationship, once area-specific effects are controlled, highlights the importance of local context in understanding the impact of park visits on theft rates. Increased residential mobility is strongly associated with a decrease in shoplifting incidents in both models. The simple model shows that a 10% increase in time spent at home is associated with a 27.91% decrease in shoplifting incidents (p \< 0.001). The AFE model indicates an almost similar effect, with a 28.69% decrease (p \< 0.001). These findings consistently suggest that increased residential mobility significantly reduces shoplifting incidents, highlighting the protective role of spending more time at home. The simple model shows that a 10% increase in visits to retail and recreation areas leads to a non-significant 0.53% decrease in shoplifting incidents. However, the AFE model reveals a contrasting result, with the same increase in visits associated with a 6.63% increase in shoplifting incidents (p \< 0.001). This significant change underscores the importance of controlling for area-specific effects, which can alter the observed relationship between mobility in retail and recreation areas and theft rates. Increased visits to transit stations are associated with a decrease in shoplifting incidents according to the simple model. A 10% increase in visits to transit stations is associated with a 3.69% decrease in shoplifting incidents (p \< 0.001). However, the AFE model indicates that the same increase leads to a 7.02% increase in shoplifting incidents (p \< 0.001). This reversal in the relationship after controlling for area-specific effects suggests that increased mobility around transit stations may increase theft risk in certain areas.
+
+#### Robbery
+
+In the simple model, increased visits to grocery and pharmacy areas are associated with a significant decrease in robbery incidents. Specifically, a 10% increase in visits to these areas leads to a 23.24% decrease in robbery incidents, and this result is statistically significant at p \< 0.001. However, when area-specific effects are controlled for in the AFE model, the relationship reverses. A 10% increase in visits to grocery and pharmacy areas results in an 8.14% increase in robbery incidents, also statistically significant at p \< 0.001. This suggests that while initial observations indicate a protective effect of increased grocery and pharmacy visits, controlling for area-specific characteristics reveals a potential risk factor. For parks, the simple model shows that a 10% increase in visits is associated with a 2.86% decrease in robbery incidents, which is significant at p \< 0.001. In contrast, the AFE model indicates that the same increase in visits to parks results in a 0.84% increase in robbery incidents (p \< 0.001). This reversal in the relationship, once area-specific effects are controlled, highlights the importance of local context in understanding the impact of park visits on robbery rates. Increased residential mobility is associated with a non-significant change in robbery incidents in the simple model, with a 10% increase in time spent at home leading to a 1.58% increase in robbery incidents (p = 0.625). However, the AFE model shows a significant decrease, with the same increase in residential mobility resulting in a 20.82% decrease in robbery incidents (p \< 0.001). This significant change after controlling for area-specific effects suggests that increased residential mobility significantly reduces robbery incidents. The simple model shows that a 10% increase in visits to retail and recreation areas leads to a 10.95% decrease in robbery incidents (p \< 0.001). However, the AFE model reveals a contrasting result, with the same increase in visits associated with a 5.69% increase in robbery incidents (p \< 0.001). This significant change underscores the importance of controlling for area-specific effects, which can alter the observed relationship between mobility in retail and recreation areas and robbery rates. Increased visits to transit stations are associated with a decrease in robbery incidents according to the simple model. A 10% increase in visits to transit stations is associated with a 13.96% decrease in robbery incidents (p \< 0.001). However, the AFE model indicates that the same increase leads to a 6.8% increase in robbery incidents (p \< 0.001). This reversal in the relationship after controlling for area-specific effects highlights the complexity of interpreting the impact of transit station visits on robbery rates without considering local area characteristics. In the simple model, increased visits to workplaces are significantly associated with a 14.34% decrease in robbery incidents for every 10% increase in visits (p \< 0.001). Conversely, the AFE model shows that the same increase in workplace visits results in a 10.49% increase in robbery incidents (p \< 0.001). This significant reversal when area-specific effects are controlled for suggests that increased workplace visits may, under certain local conditions, elevate the risk of robbery.
+
+#### Theft from the person
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with a 33.14% decrease in theft from the person incidents for every 10% increase in visits (p \< 0.001). However, the AFE model indicates that the same increase in visits results in a significant 20.4% increase in theft from the person incidents (p \< 0.001). This stark contrast between the models suggests that local area characteristics play a crucial role in influencing theft rates. For visits to parks, the simple model shows a 4.3% decrease in theft from the person incidents for every 10% increase in visits (p \< 0.001). In contrast, the AFE model indicates a 1.16% increase in incidents (p \< 0.001) with the same increase in visits. This reversal suggests that while park visits might appear to reduce theft initially, underlying area-specific factors may contribute to an increase in such incidents. Increased residential mobility is not significantly associated with changes in theft from the person incidents in the simple model (0.35% decrease; p = 0.548). However, when area characteristics are controlled, the AFE model shows a substantial 48.08% decrease in theft from the person incidents for every 10% increase in residential mobility (p \< 0.001). This significant finding highlights the protective effect of increased residential presence when local factors are accounted for. Increased visits to retail and recreation areas are associated with a 17.4% decrease in theft from the person incidents for every 10% increase in visits in the simple model (p \< 0.001). Conversely, the AFE model shows a 13.48% increase in such incidents with the same increase in visits (p \< 0.001). This shift suggests that while increased retail activity may initially appear to deter theft, local area effects significantly influence the actual risk. The simple model indicates that a 10% increase in visits to transit stations is associated with a 13.61% decrease in theft from the person incidents (p \< 0.001). However, the AFE model shows a significant 14.63% increase in incidents with the same increase in visits (p \< 0.001). This dramatic reversal highlights the importance of considering local area characteristics in understanding the true impact of transit station visits on theft rates. In the simple model, increased visits to workplaces are significantly associated with a 21.7% decrease in theft from the person incidents for every 10% increase in visits (p \< 0.001). The AFE model, however, shows a substantial 22.14% increase in such incidents with the same increase in visits (p \< 0.001). This significant contrast underscores the complex relationship between workplace visits and theft rates, influenced heavily by local area characteristics.
+
+### Property Crime Around Residential Areas
+
+#### Bike Theft
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with a 19.4% decrease in bike theft incidents for every 10% increase in visits (p \< 0.001). However, the AFE model indicates a significant 7.45% increase in bike theft incidents for the same increase in visits (p \< 0.001). This contrast suggests that local area characteristics play a substantial role in influencing bike theft rates. For visits to parks, the simple model shows a 1.39% decrease in bike theft incidents for every 10% increase in visits (p \< 0.001). Conversely, the AFE model indicates a significant 3.44% increase in bike theft incidents with the same increase in visits (p \< 0.001). This reversal implies that while park visits might initially appear to reduce bike theft, area-specific factors may contribute to an increase in such incidents. Increased residential mobility is significantly associated with a 13.69% increase in bike theft incidents for every 10% increase in residential mobility in the simple model (p \< 0.001). However, when area characteristics are controlled, the AFE model shows a substantial 17.7% decrease in bike theft incidents for the same increase in residential mobility (p \< 0.001). This significant finding highlights the protective effect of increased residential presence when local factors are accounted for. Increased visits to retail and recreation areas are associated with an 11.43% decrease in bike theft incidents for every 10% increase in visits in the simple model (p \< 0.001). In contrast, the AFE model indicates a 4.92% increase in bike theft incidents with the same increase in visits (p \< 0.001). This shift suggests that while increased retail activity may initially appear to deter bike theft, local area effects significantly influence the actual risk. The simple model indicates that a 10% increase in visits to transit stations is associated with a 13.61% decrease in bike theft incidents (p \< 0.001). However, the AFE model shows a 6.62% increase in bike theft incidents with the same increase in visits (p \< 0.001). This dramatic reversal highlights the importance of considering local area characteristics in understanding the true impact of transit station visits on bike theft rates. In the simple model, increased visits to workplaces are significantly associated with a 20.45% decrease in bike theft incidents for every 10% increase in visits (p \< 0.001). The AFE model, however, indicates a 5.43% increase in bike theft incidents with the same increase in visits (p \< 0.001). This significant contrast underscores the complex relationship between workplace visits and bike theft rates, heavily influenced by local area characteristics.
+
+#### Burglary
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with an 11.06% decrease in burglary incidents for every 10% increase in visits (p \< 0.001). However, the AFE model shows a slight but significant 0.91% increase in burglary incidents for the same increase in visits (p \< 0.001). This suggests that local area characteristics significantly influence the relationship between grocery and pharmacy visits and burglary rates. For visits to parks, the simple model indicates a 2.07% decrease in burglary incidents for every 10% increase in visits (p \< 0.001). The AFE model shows a smaller but still significant 0.42% decrease in burglary incidents with the same increase in visits (p \< 0.001). This indicates that while park visits tend to reduce burglary rates, this effect is less pronounced when local area characteristics are considered. Increased residential mobility shows no significant effect on burglary incidents in the simple model (0.15% increase; p = 0.936). However, the AFE model reveals a significant 6.75% decrease in burglary incidents for every 10% increase in residential mobility (p \< 0.001). This finding suggests that increased residential presence significantly reduces burglary rates when accounting for area-specific factors. Increased visits to retail and recreation areas are associated with a 5.47% decrease in burglary incidents for every 10% increase in visits in the simple model (p \< 0.001). In contrast, the AFE model shows a significant 1.61% increase in burglary incidents with the same increase in visits (p \< 0.001). This indicates that while increased retail activity might initially appear to deter burglary, local area effects significantly influence this relationship. The simple model indicates that a 10% increase in visits to transit stations is associated with an 8.32% decrease in burglary incidents (p \< 0.001). However, the AFE model shows a 2.47% increase in burglary incidents with the same increase in visits (p \< 0.001). This dramatic reversal highlights the importance of considering local area characteristics in understanding the true impact of transit station visits on burglary rates. Increased visits to workplaces are significantly associated with a 4.5% decrease in burglary incidents for every 10% increase in visits in the simple model (p \< 0.001). The AFE model, however, indicates a 4.71% increase in burglary incidents with the same increase in visits (p \< 0.001). This significant contrast underscores the complex relationship between workplace visits and burglary rates, heavily influenced by local area characteristics.
+
+#### Damage & Arson
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with a 1.44% decrease in damage and arson incidents for every 10% increase in visits (p = 0.012). However, the AFE model shows a significant 5.23% increase in damage and arson incidents for the same increase in visits (p \< 0.001). This suggests that local area characteristics significantly influence the relationship between grocery and pharmacy visits and damage and arson rates. For visits to parks, the simple model indicates no significant effect on damage and arson incidents (-0.05% change; p = 0.778). In contrast, the AFE model shows a small but significant 1.28% increase in damage and arson incidents for every 10% increase in park visits (p \< 0.001). This highlights the role of local area effects in understanding the relationship between park visits and damage and arson rates. Increased residential mobility is significantly associated with a 17.61% decrease in damage and arson incidents for every 10% increase in mobility in the simple model (p \< 0.001). The AFE model also shows a significant decrease, but at a smaller rate of 12.13% for the same increase in residential mobility (p \< 0.001). This indicates that increased residential presence generally reduces damage and arson rates, although local area characteristics play a role in this relationship. Increased visits to retail and recreation areas are associated with a slight but significant 0.81% decrease in damage and arson incidents for every 10% increase in visits in the simple model (p = 0.023). In contrast, the AFE model shows a significant 3.15% increase in damage and arson incidents with the same increase in visits (p \< 0.001). This suggests that while increased retail activity might initially appear to deter damage and arson, local area effects significantly influence this relationship. The simple model indicates that a 10% increase in visits to transit stations is associated with a 3.02% decrease in damage and arson incidents (p \< 0.001). However, the AFE model shows a 3.71% increase in damage and arson incidents with the same increase in visits (p \< 0.001). This reversal highlights the importance of considering local area characteristics in understanding the true impact of transit station visits on damage and arson rates. Increased visits to workplaces are significantly associated with a 4.18% increase in damage and arson incidents for every 10% increase in visits in the simple model (p \< 0.001). The AFE model also indicates a significant increase, at a rate of 5.28% for the same increase in visits (p \< 0.001). This consistent finding across both models underscores the robust relationship between increased workplace visits and higher damage and arson rates.
+
+#### Vehicle Crime
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with a 14.98% decrease in vehicle crime incidents for every 10% increase in visits (p \< 0.001). However, the AFE model shows a significant 5.63% increase in vehicle crime incidents for the same increase in visits (p \< 0.001). This suggests that local area characteristics significantly influence the relationship between grocery and pharmacy visits and vehicle crime rates. For visits to parks, the simple model indicates a significant 2.56% decrease in vehicle crime incidents for every 10% increase in park visits (p \< 0.001). In contrast, the AFE model shows no significant effect on vehicle crime incidents (-0.05% change; p = 0.504). This highlights the role of local area effects in understanding the relationship between park visits and vehicle crime rates. Increased residential mobility is not significantly associated with vehicle crime incidents in the simple model (0.29% change; p = 0.887). However, the AFE model shows a significant 16.31% decrease in vehicle crime incidents for every 10% increase in residential mobility (p \< 0.001). This indicates that controlling for local area characteristics reveals a strong negative association between residential mobility and vehicle crime rates. Increased visits to retail and recreation areas are associated with a significant 6.49% decrease in vehicle crime incidents for every 10% increase in visits in the simple model (p \< 0.001). In contrast, the AFE model shows a significant 3.86% increase in vehicle crime incidents with the same increase in visits (p \< 0.001). This suggests that while increased retail activity might initially appear to deter vehicle crime, local area effects significantly influence this relationship. The simple model indicates that a 10% increase in visits to transit stations is associated with an 11.27% decrease in vehicle crime incidents (p \< 0.001). However, the AFE model shows a 4.51% increase in vehicle crime incidents with the same increase in visits (p \< 0.001). This reversal highlights the importance of considering local area characteristics in understanding the true impact of transit station visits on vehicle crime rates. Increased visits to workplaces are significantly associated with an 8.92% decrease in vehicle crime incidents for every 10% increase in visits in the simple model (p \< 0.001). The AFE model, however, indicates a significant increase of 8.94% in vehicle crime incidents with the same increase in visits (p \< 0.001). This consistent finding across both models underscores the robust relationship between increased workplace visits and higher vehicle crime rates.
+
+### Violence and Public Order
+
+#### Weapon posession
+
+In the simple model, increased visits to grocery and pharmacy locations are significantly associated with a 5.29% decrease in weapon possession incidents for every 10% increase in visits (p \< 0.001). However, the AFE model shows a significant 4.52% increase in weapon possession incidents for the same increase in visits (p \< 0.001). This suggests that local area characteristics significantly influence the relationship between grocery and pharmacy visits and weapon possession rates. For visits to parks, the simple model indicates a significant 1.31% decrease in weapon possession incidents for every 10% increase in park visits (p \< 0.001). In contrast, the AFE model shows a significant 1.15% increase in weapon possession incidents with the same increase in visits (p \< 0.001). This reversal highlights the importance of considering local area characteristics when interpreting the relationship between park visits and weapon possession rates. Increased residential mobility is associated with a significant 16.31% decrease in weapon possession incidents for every 10% increase in residential mobility in the simple model (p \< 0.001). The AFE model also shows a significant decrease but with a smaller effect size of 10.43% (p \< 0.001). This indicates that increased residential mobility consistently correlates with lower weapon possession rates, although the effect is moderated by local area characteristics. Increased visits to retail and recreation areas are associated with a significant 2.83% decrease in weapon possession incidents for every 10% increase in visits in the simple model (p \< 0.001). Conversely, the AFE model shows a significant 2.70% increase in weapon possession incidents with the same increase in visits (p \< 0.001). This suggests that while initial analysis may indicate a deterrent effect, controlling for local area effects reveals an opposite relationship. The simple model indicates that a 10% increase in visits to transit stations is associated with a 5.51% decrease in weapon possession incidents (p \< 0.001). However, the AFE model shows a significant 3.82% increase in weapon possession incidents with the same increase in visits (p \< 0.001). This discrepancy underscores the necessity of considering local area characteristics to understand the true impact of transit station visits on weapon possession rates. Increased visits to workplaces are not significantly associated with weapon possession incidents in the simple model (2.01% increase; p = 0.071). The AFE model, however, indicates a significant 4.13% increase in weapon possession incidents with the same increase in visits (p \< 0.001). This suggests that increased workplace visits are robustly linked to higher weapon possession rates when accounting for local area effects.
+
+#### Violence & Sex Offences
+
+In the simple model, increased visits to grocery and pharmacy locations are associated with a significant 1.32% decrease in violence and sexual offences for every 10% increase in visits (p = 0.032). However, the AFE model reveals a significant 7.14% increase in violence and sexual offences for the same increase in visits (p \< 0.001). This suggests that while the initial model indicates a protective effect, controlling for area characteristics shows an opposite, adverse effect. Visits to parks in the simple model do not show a significant association with violence and sexual offences, with a 0.30% decrease for every 10% increase in visits (p = 0.111). However, the AFE model shows a significant 1.54% increase in these offences with the same increase in visits (p \< 0.001). This indicates that after accounting for local area characteristics, increased park visits are associated with higher rates of violence and sexual offences. Increased residential mobility in the simple model is associated with a significant 19.01% decrease in violence and sexual offences for every 10% increase in residential mobility (p \< 0.001). The AFE model also shows a significant decrease but with a smaller effect size of 15.15% (p \< 0.001). This suggests a consistent protective effect of increased residential mobility on reducing violence and sexual offences, though the effect is moderated when controlling for local area characteristics. In the simple model, increased visits to retail and recreation areas are not significantly associated with violence and sexual offences, with a 0.52% decrease for every 10% increase in visits (p = 0.169). Conversely, the AFE model shows a significant 4.00% increase in violence and sexual offences with the same increase in visits (p \< 0.001). This highlights the importance of considering area-specific characteristics to understand the true impact of mobility changes. Increased visits to transit stations are significantly associated with a 3.94% decrease in violence and sexual offences for every 10% increase in visits in the simple model (p \< 0.001). However, the AFE model shows a significant 3.99% increase in these offences with the same increase in visits (p \< 0.001). This indicates that while initial findings suggest a protective effect, the true relationship reveals an adverse impact when local area characteristics are considered. The simple model indicates that a 10% increase in visits to workplaces is associated with a significant 4.08% increase in violence and sexual offences (p \< 0.001). The AFE model reveals a stronger effect, with a 6.36% increase in these offences for the same increase in visits (p \< 0.001). This suggests a robust relationship between increased workplace visits and higher rates of violence and sexual offences, even after accounting for local area characteristics.
+
+#### Public Order
+
+In the simple model, increased visits to grocery and pharmacy locations are associated with a significant 1.84% decrease in public order offences for every 10% increase in visits (p = 0.007). However, the AFE model reveals a significant 9.78% increase in public order offences for the same increase in visits (p \< 0.001). This suggests that while the initial model indicates a protective effect, controlling for area characteristics shows an opposite, adverse effect. Visits to parks in the simple model do not show a significant association with public order offences, with a 0.06% decrease for every 10% increase in visits (p = 0.779). However, the AFE model shows a significant 2.94% increase in these offences with the same increase in visits (p \< 0.001). This indicates that after accounting for local area characteristics, increased park visits are associated with higher rates of public order offences. Increased residential mobility in the simple model is associated with a significant 19.76% decrease in public order offences for every 10% increase in residential mobility (p \< 0.001). The AFE model also shows a significant decrease but with a smaller effect size of 18.91% (p \< 0.001). This suggests a consistent protective effect of increased residential mobility on reducing public order offences, though the effect is moderated when controlling for local area characteristics. In the simple model, increased visits to retail and recreation areas are associated with a significant 0.86% decrease in public order offences for every 10% increase in visits (p = 0.041). Conversely, the AFE model shows a significant 5.22% increase in public order offences with the same increase in visits (p \< 0.001). This highlights the importance of considering area-specific characteristics to understand the true impact of mobility changes. Increased visits to transit stations are significantly associated with a 4.81% decrease in public order offences for every 10% increase in visits in the simple model (p \< 0.001). However, the AFE model shows a significant 5.62% increase in these offences with the same increase in visits (p \< 0.001). This indicates that while initial findings suggest a protective effect, the true relationship reveals an adverse impact when local area characteristics are considered. The simple model indicates that a 10% increase in visits to workplaces is associated with a significant 2.16% increase in public order offences (p = 0.009). The AFE model reveals a stronger effect, with a 6.63% increase in these offences for the same increase in visits (p \< 0.001). This suggests a robust relationship between increased workplace visits and higher rates of public order offences, even after accounting for local area characteristics.
+
+### ASB and Miscellenaous
+
+#### ASB
+
+For grocery and pharmacy visits, both the simple and AFE models show a significant reduction in ASB and miscellaneous offences. Specifically, the simple model indicates that a 10% increase in visits is associated with a 17.75% decrease in these offences (p \< 0.001). The AFE model also shows a significant reduction but with a slightly smaller effect size of 14.17% (p \< 0.001). This suggests that increased visits to grocery and pharmacy locations are consistently associated with lower rates of ASB and miscellaneous offences, even when controlling for area characteristics. Visits to parks present contrasting findings between the simple and AFE models. The simple model shows no significant association, with a 0.09% increase in ASB and miscellaneous offences for a 10% increase in park visits (p = 0.612). In contrast, the AFE model indicates a significant increase of 0.45% in these offences with the same increase in park visits (p \< 0.001). This highlights the importance of accounting for area-specific characteristics to understand the true impact of mobility changes. Increased residential mobility shows a significant positive association with ASB and miscellaneous offences in both models. The simple model indicates a substantial 41.5% increase in these offences for a 10% increase in residential mobility (p \< 0.001). Similarly, the AFE model shows a slightly lower but still significant increase of 39.57% (p \< 0.001). This suggests that higher residential mobility correlates with increased ASB and miscellaneous offences, regardless of area-specific factors. For retail and recreation areas, both models indicate a significant reduction in ASB and miscellaneous offences. The simple model shows a 12.31% decrease for every 10% increase in visits (p \< 0.001), while the AFE model shows an 8.59% decrease (p \< 0.001). This consistent negative association across models suggests that increased activity in retail and recreation areas is associated with lower rates of ASB and miscellaneous offences. Increased visits to transit stations are associated with a significant decrease in ASB and miscellaneous offences in both models. The simple model shows an 11.92% reduction for every 10% increase in visits (p \< 0.001), while the AFE model shows a smaller but still significant decrease of 6.83% (p \< 0.001). This suggests a protective effect of increased transit station activity on reducing ASB and miscellaneous offences, even after accounting for area-specific factors. Both models show a significant reduction in ASB and miscellaneous offences associated with increased visits to workplaces. The simple model indicates a 21.5% decrease for every 10% increase in workplace visits (p \< 0.001), and the AFE model shows an 18.82% decrease (p \< 0.001). This consistent finding across models highlights the association between higher workplace activity and lower rates of ASB and miscellaneous offences.
+
+#### Drugs
+
+For grocery and pharmacy visits, both the simple and AFE models show a significant reduction in drug offences. Specifically, the simple model indicates that a 10% increase in visits is associated with a 17.62% decrease in drug offences (p \< 0.001). The AFE model also shows a significant reduction but with a smaller effect size of 6.04% (p \< 0.001). This suggests that increased visits to grocery and pharmacy locations are consistently associated with lower rates of drug offences, even when controlling for area characteristics. Visits to parks present consistent findings between the simple and AFE models. The simple model shows a significant association, with an 18% decrease in drug offences for a 10% increase in park visits (p \< 0.001). The AFE model also indicates a significant decrease of 0.27% in drug offences with the same increase in park visits (p \< 0.001). This highlights that increased park visits are generally associated with lower drug offences, although the effect size is substantially smaller when controlling for area-specific factors. Increased residential mobility shows a significant positive association with drug offences in both models. The simple model indicates a substantial 22.42% increase in drug offences for a 10% increase in residential mobility (p \< 0.001). Similarly, the AFE model shows a slightly lower but still significant increase of 16.01% (p \< 0.001). This suggests that higher residential mobility correlates with increased drug offences, regardless of area-specific factors. For retail and recreation areas, both models indicate a significant reduction in drug offences. The simple model shows an 11.15% decrease for every 10% increase in visits (p \< 0.001), while the AFE model shows a smaller decrease of 3.97% (p \< 0.001). This consistent negative association across models suggests that increased activity in retail and recreation areas is associated with lower rates of drug offences. Increased visits to transit stations are associated with a significant decrease in drug offences in both models. The simple model shows a 13.92% reduction for every 10% increase in visits (p \< 0.001), while the AFE model shows a smaller but still significant decrease of 3.51% (p \< 0.001). This suggests a protective effect of increased transit station activity on reducing drug offences, even after accounting for area-specific factors. Both models show a significant reduction in drug offences associated with increased visits to workplaces. The simple model indicates a 16.39% decrease for every 10% increase in workplace visits (p \< 0.001), and the AFE model shows a smaller decrease of 6.24% (p \< 0.001). This consistent finding across models highlights the association between higher workplace activity and lower rates of drug offences.
+
+#### Other Crime
+
+For parks, the simple model indicates a significant reduction in other crime with a 10% increase in visits resulting in a 1.08% decrease in crime rates (p \< 0.001). However, the AFE model presents a slight but significant increase of 0.58% in crime rates with the same increase in park visits (p \< 0.001). This suggests that while increased park visits generally correlate with lower crime rates, when controlling for area-specific factors, the association reverses slightly. Increased residential mobility shows a consistent significant reduction in other crime in both models. The simple model indicates a 12.3% decrease in other crime for a 10% increase in residential mobility (p \< 0.001). The AFE model also shows a significant reduction, though smaller, with a 4.22% decrease (p \< 0.001). This suggests that higher residential mobility is associated with reduced other crime rates, even when accounting for area-specific factors. For retail and recreation areas, the simple model indicates a significant reduction in other crime with a 10% increase in visits resulting in a 2.67% decrease in crime rates (p \< 0.001). Conversely, the AFE model shows a slight but significant increase of 0.76% in other crime rates with the same increase in visits (p \< 0.001). This discrepancy suggests that while increased activity in retail and recreation areas generally correlates with lower crime rates, area-specific factors may influence this association. Increased visits to transit stations are associated with a significant reduction in other crime in the simple model, with a 5.35% decrease for every 10% increase in visits (p \< 0.001). However, the AFE model shows a slight but significant increase of 1.15% in other crime rates with the same increase in visits (p \< 0.001). This indicates that while higher transit station activity generally correlates with lower crime rates, area-specific factors may mitigate this effect. Both models show a significant association between increased visits to workplaces and other crime rates. The simple model indicates a 3.57% increase in other crime rates for a 10% increase in workplace visits (p \< 0.001). The AFE model shows a smaller but still significant increase of 2.24% (p \< 0.001). This consistent finding suggests that higher workplace activity is associated with increased other crime rates.
+
+# Discussion
+
+The COVID-19 pandemic and resulting lockdowns significantly altered mobility trends, impacting crime rates in various ways. The analysis of crime and mobility indices reveals nuanced relationships influenced by increased residential presence, changes in public space usage, and varying local area characteristics. These findings illustrate how mobility trends during the pandemic affected crime incidents and highlight the complexities of proactive policing, increased guardianship, and opportunity structures.
+
+During the lockdowns, people spent more time at home due to restrictions on movement. This shift is evident in the consistent association between increased residential mobility and decreased crime rates across multiple crime types. For instance, higher residential mobility significantly reduced incidents of other theft, shoplifting, robbery, and burglary. This protective effect can be attributed to increased guardianship, where the presence of residents deterred potential offenders. Moreover, the lockdowns limited opportunities for crime by reducing public gatherings and retail activities, which typically provide targets for theft and other offences.
+
+The analysis of retail and recreation mobility presents contrasting findings. In the simple models, increased visits to these areas are often associated with decreased crime rates, suggesting that economic activity and the presence of people can deter criminal behaviour. However, when controlling for area-specific factors using AFE models, the relationship often reverses, indicating an increase in crime rates. This discrepancy underscores the importance of considering local context. In areas where retail and recreation activities resumed more quickly or where security measures were less effective, increased mobility may have provided more opportunities for crime.
+
+Public spaces like parks also showed varied effects on crime rates. Initially, increased park visits appeared to correlate with reduced crime rates, potentially due to the presence of law-abiding citizens acting as informal guardians. However, AFE models revealed that controlling for local area characteristics often led to an increase in crime rates associated with park visits. This suggests that in some areas, parks may attract not only recreational visitors but also potential offenders, highlighting the need for targeted policing and community monitoring in these spaces.
+
+Transit stations exhibited a similar pattern. Increased mobility around transit stations initially seemed to reduce crime rates, likely due to heightened surveillance and the presence of commuters. However, the AFE models often indicated an increase in crime rates, suggesting that the resumption of transit activity provided opportunities for offences such as robbery and theft from the person. This highlights the importance of robust security measures in and around transit hubs to mitigate these risks.
+
+Workplace mobility showed consistent associations with increased crime rates, particularly for offences like robbery and violence. The return to workplaces may have led to more targets and opportunities for crime, emphasizing the need for workplace security and awareness programs. Additionally, the data suggests that proactive policing and targeted interventions are crucial in managing the risks associated with increased workplace mobility.
+
+Proactive policing and increased guardianship played significant roles in influencing crime rates. The reduction in drug offences and anti-social behaviour (ASB) incidents associated with increased mobility to grocery and pharmacy locations suggests effective policing and community vigilance in these areas. These findings highlight the importance of maintaining visible law enforcement and community engagement, especially in times of significant mobility changes.
+
+The use of AFE models provided a more accurate understanding of the relationship between mobility and crime by accounting for local area characteristics. This methodological approach revealed the complexities of crime dynamics that simple models might overlook. For instance, while simple models suggested that increased mobility generally reduced crime rates, AFE models often showed the opposite, indicating that local factors significantly influence these relationships. This highlights the need for tailored policy interventions that consider local contexts and characteristics.
+
+Key findings from this analysis indicate that increased residential presence during the lockdowns played a protective role across various crime types. However, as mobility patterns shifted with the easing of restrictions, different public spaces and activities influenced crime rates in complex ways. Retail and recreation areas, parks, transit stations, and workplaces each presented unique challenges and opportunities for crime prevention.
+
+Policy implications of these findings emphasize the need for adaptive and context-specific strategies in crime prevention and policing. Increased residential mobility and community engagement should be leveraged to enhance guardianship and deter crime. Public spaces require targeted interventions to balance accessibility with security, ensuring that increased mobility does not inadvertently lead to higher crime rates. Transit stations and workplaces need robust security measures and awareness programs to mitigate risks associated with increased mobility.
+
+Decreased Mobility and Crime Reduction Residential Mobility:
+
+Insight: Increased time spent at home is associated with a significant reduction in various types of crimes, including burglary, theft from the person, and violence and sexual offences.
+
+Policy Implications:
+
+Promote Remote Work: Encourage and facilitate remote working options where feasible. This keeps more people at home during traditional work hours, enhancing natural surveillance in residential areas. Community Engagement: Foster community programs that encourage residents to spend more time in their neighborhoods. This can include neighborhood events, local markets, and community projects. Home Security Incentives: Provide incentives for residents to invest in home security systems, such as tax rebates or subsidies for installing alarms and surveillance cameras.
+
+Transit Stations and Public Order:
+
+Insight: Increased visits to transit stations are associated with a reduction in crimes such as bike theft and public order offences in initial observations but increase when local characteristics are accounted for.
+
+Policy Implications:
+
+Transit Security: Increase security presence in transit areas through visible policing, CCTV cameras, and emergency call systems to deter potential offenders. Public Awareness Campaigns: Conduct campaigns to educate the public on safety practices while using transit systems and encourage reporting of suspicious activities. Urban Planning: Design transit hubs with crime prevention in mind, ensuring adequate lighting, clear visibility, and easy access to emergency services.
+
+Increased Mobility and Crime Increase Retail and Recreation Areas:
+
+Insight: Increased mobility in retail and recreation areas is linked to higher rates of shoplifting, other thefts, and violence when area-specific characteristics are considered.
+
+Policy Implications:
+
+Enhanced Retail Security: Encourage retailers to adopt advanced security measures like RFID tags, CCTV surveillance, and hiring professional security personnel. Police Patrols: Increase police presence in retail and recreation areas, especially during peak times, to provide a visible deterrent to potential criminals. Community Policing: Implement community policing strategies that involve regular interaction between law enforcement and local businesses to address security concerns collaboratively. Workplaces:
+
+Insight: Increased visits to workplaces correlate with higher incidences of crimes such as robbery, violence, and public order offences when local factors are taken into account.
+
+Policy Implications:
+
+Workplace Security Protocols: Encourage businesses to enhance security measures at workplaces, including controlled access, employee ID verification, and security audits. Flexible Work Schedules: Promote flexible work hours to reduce congestion and the potential for crime during standard working hours. Collaborative Safety Initiatives: Foster collaborations between businesses and local law enforcement to develop safety programs tailored to the specific needs of workplace environments. Mixed Effects of Mobility Parks:
+
+Insight: Mobility to parks shows mixed effects, sometimes reducing and other times increasing certain crime types based on the model used.
+
+Policy Implications:
+
+Park Rangers and Volunteers: Increase the presence of park rangers and encourage volunteer patrols to monitor activities and provide assistance. Improved Lighting and Facilities: Ensure parks are well-lit and equipped with facilities that enhance safety, such as emergency call boxes and visible signposts. Engagement Activities: Organize community activities in parks to increase legitimate use and natural surveillance, thereby deterring criminal activities. General Policy Implications Proactive Policing:
+
+Implement data-driven policing strategies that utilize real-time data to identify hotspots and deploy resources effectively. Conduct regular risk assessments and adapt policing tactics based on changing mobility patterns and crime trends. Increased Guardianship:
+
+Encourage the use of neighborhood watch programs and community guardianship initiatives to foster a sense of collective responsibility for safety. Support local initiatives that engage residents in monitoring and reporting suspicious activities. Urban Design and Planning:
+
+Incorporate principles of Crime Prevention Through Environmental Design (CPTED) in urban planning to create safer public spaces and reduce opportunities for crime. Plan for mixed-use developments that promote natural surveillance by ensuring a consistent flow of people throughout the day. Education and Awareness:
+
+Launch public education campaigns to raise awareness about the importance of reporting crimes and adopting personal safety measures. Provide resources and training for businesses and communities to implement effective crime prevention strategies.
+
+In conclusion, the COVID-19 pandemic and resulting mobility changes significantly impacted crime rates, highlighting the importance of understanding local contexts and implementing adaptive, targeted interventions. Proactive policing, community engagement, and tailored security measures are crucial in managing the complex dynamics between mobility and crime. The use of advanced modelling techniques, such as AFE models, provides valuable insights that can inform effective policy and practice in crime prevention.
+
+# Conclusion
+
+Summarise the key findings and suggest future research directions.
+
+# References
+
+List all the references cited in the paper.
